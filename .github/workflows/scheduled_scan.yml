@@ -2,20 +2,20 @@ name: Scheduled Trading Scan
 
 on:
   schedule:
-    # Gira alle 08:30 e 16:30 UTC (che sono le 09:30 e 17:30 in Italia)
+    # Gira alle 08:30 e 16:30 UTC (09:30 e 17:30 in Italia)
     - cron: '30 8 * * 1-5'
-    - cron: '30 14 * * 1-5'
-  workflow_dispatch: # Permette di avviarlo anche a mano per test
+    - cron: '30 16 * * 1-5'
+  workflow_dispatch: # Questo ti permette di lanciarlo a mano per test
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Aggiornato da v3
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Aggiornato da v4
         with:
           python-version: '3.9'
 
@@ -25,7 +25,6 @@ jobs:
 
       - name: Run Scan
         env:
-          # Qui colleghiamo i segreti di GitHub allo script
           GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
