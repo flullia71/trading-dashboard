@@ -4,7 +4,7 @@ on:
   schedule:
     # Gira alle 08:30 e 16:30 UTC (che sono le 09:30 e 17:30 in Italia)
     - cron: '30 8 * * 1-5'
-    - cron: '30 16 * * 1-5'
+    - cron: '30 14 * * 1-5'
   workflow_dispatch: # Permette di avviarlo anche a mano per test
 
 jobs:
