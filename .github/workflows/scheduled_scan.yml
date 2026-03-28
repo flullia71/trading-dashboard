@@ -2,22 +2,21 @@ name: Scheduled Trading Scan
 
 on:
   schedule:
-    # Gira alle 08:30 e 16:30 UTC (09:30 e 17:30 in Italia)
     - cron: '30 8 * * 1-5'
-    - cron: '30 16 * * 1-5'
-  workflow_dispatch: # Questo ti permette di lanciarlo a mano per test
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch: 
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # Aggiornato da v3
+        uses: actions/checkout@v4 # Aggiornato
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # Aggiornato da v4
+        uses: actions/setup-python@v5 # Aggiornato
         with:
-          python-version: '3.9'
+          python-version: '3.10' # Versione più moderna
 
       - name: Install dependencies
         run: |
