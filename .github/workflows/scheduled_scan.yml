@@ -11,12 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # Aggiornato
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # Aggiornato
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Versione più moderna
+          python-version: '3.10' # Forza Python 3.10
 
       - name: Install dependencies
         run: |
