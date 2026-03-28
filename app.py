@@ -13,44 +13,40 @@ st.set_page_config(page_title="Trading Terminal Pro", layout="wide")
 @st.cache_resource
 def get_google_sheet():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    # Carica i segreti dalla cassaforte di Streamlit
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
-    
-    # Apri il foglio usando l'URL salvato nei secrets
     sheet_url = st.secrets["google_sheet_url"]
     return client.open_by_url(sheet_url).sheet1
 
 try:
     sheet = get_google_sheet()
 except Exception as e:
-    st.error(f"Errore di connessione a Google Sheets: Assicurati di aver configurato i Secrets correttamente. Dettagli: {e}")
+    st.error(f"Errore di connessione a Google Sheets. Dettagli: {e}")
     st.stop()
 
-# Funzioni per leggere e scrivere sul database
 def carica_storico():
     dati = sheet.get_all_records()
     if dati:
         return pd.DataFrame(dati)
     else:
-        return pd.DataFrame(columns=['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore'])
+        # AGGIUNTA LA COLONNA VALUTA QUI
+        return pd.DataFrame(columns=['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore', 'Valuta'])
 
 def salva_nuovo_trade(lista_dati):
     sheet.append_row(lista_dati)
 
-# Caricamento del portafoglio dal Cloud
 df_storico = carica_storico()
 
 # ---------------------------------------------------------
-# IL RESTO DEL CODICE (Scanner e UI)
+# UI PRINCIPALE
 # ---------------------------------------------------------
-st.title("📊 Trading Terminal Pro (Cloud Database)")
-st.write("Scansione intelligente collegata in tempo reale al tuo Google Sheet.")
+st.title("📊 Trading Terminal Pro (Multi-Valuta)")
+st.write("Scansione intelligente e portafoglio con bilancio separato per € e $.")
 
 st.sidebar.header("💰 Money Management")
 capitale_totale = st.sidebar.number_input("Capitale Totale a disposizione", min_value=100, value=10000, step=100)
-rischio_percentuale = st.sidebar.slider("Quanto capitale investire per ogni segnale?", min_value=1, max_value=20, value=5, format="%d%%")
+rischio_percentuale = st.sidebar.slider("Quanto investire per ogni segnale?", min_value=1, max_value=20, value=5, format="%d%%")
 capitale_per_trade = capitale_totale * (rischio_percentuale / 100)
 
 st.sidebar.header("📋 Gestione Azioni")
@@ -67,12 +63,12 @@ rsi_soglia_sell = st.sidebar.slider("Soglia RSI Vendita", 50, 90, 70)
 
 tab_scanner, tab_diario = st.tabs(["🚀 Scanner Intelligente", "📓 Diario e Portafoglio"])
 
+# --- SCHEDA 1: LO SCANNER ---
 with tab_scanner:
     if st.button("🔍 Avvia Scansione", type="primary"):
         col1, col2, col3 = st.columns(3)
         for i, ticker in enumerate(tickers):
             try:
-                # Lettura intelligente del portafoglio da Google Sheets
                 quote_possedute = 0
                 if not df_storico.empty:
                     storico_ticker = df_storico[df_storico['Ticker'] == ticker]
@@ -111,8 +107,8 @@ with tab_scanner:
                 banda_inf = float(ultima_riga['BBL'])
                 banda_sup = float(ultima_riga['BBU'])
 
-                condizione_matematica_buy = (chiusura > ema_val) and (chiusura <= banda_inf) and (rsi_val < rsi_soglia_buy)
-                condizione_matematica_sell = (chiusura >= banda_sup) or (rsi_val > rsi_soglia_sell)
+                buy_condition = (chiusura > ema_val) and (chiusura <= banda_inf) and (rsi_val < rsi_soglia_buy)
+                sell_condition = (chiusura >= banda_sup) or (rsi_val > rsi_soglia_sell)
 
                 azioni_consigliate = int(capitale_per_trade / chiusura) if chiusura > 0 else 0
 
@@ -136,14 +132,17 @@ with tab_scanner:
             except Exception as e:
                 pass
 
+# --- SCHEDA 2: IL DIARIO DI TRADING E P&L ---
 with tab_diario:
     st.subheader("📝 Registra una nuova operazione")
     with st.form("form_trade", clear_on_submit=True):
-        col_t, col_a, col_p, col_q = st.columns(4)
+        # Aggiunta la colonna per la valuta
+        col_t, col_a, col_p, col_q, col_v = st.columns(5)
         form_ticker = col_t.text_input("Ticker (es. AAPL)").upper()
         form_azione = col_a.selectbox("Azione", ["Acquisto (Buy)", "Vendita (Sell)"])
-        form_prezzo = col_p.number_input("Prezzo di esecuzione", min_value=0.01, format="%.2f")
-        form_quantita = col_q.number_input("Quantità (Quote)", min_value=1, step=1)
+        form_prezzo = col_p.number_input("Prezzo", min_value=0.01, format="%.2f")
+        form_quantita = col_q.number_input("Quantità", min_value=1, step=1)
+        form_valuta = col_v.selectbox("Valuta", ["$", "€"])
         
         inviato = st.form_submit_button("💾 Salva in Google Sheets")
         
@@ -152,8 +151,8 @@ with tab_diario:
             controvalore = form_prezzo * form_quantita * moltiplicatore
             data_corrente = datetime.now().strftime("%Y-%m-%d %H:%M")
             
-            # Scrittura diretta su Google Sheets
-            salva_nuovo_trade([data_corrente, form_ticker, form_azione, form_prezzo, form_quantita, controvalore])
+            # Scrittura con l'aggiunta della valuta come 7° elemento
+            salva_nuovo_trade([data_corrente, form_ticker, form_azione, form_prezzo, form_quantita, controvalore, form_valuta])
             
             st.success("Operazione registrata PERMANENTEMENTE nel cloud!")
             st.rerun()
@@ -161,13 +160,23 @@ with tab_diario:
     st.markdown("---")
     st.subheader("📚 Il tuo Portafoglio (Live da Google Sheets)")
     
-    if not df_storico.empty:
+    if not df_storico.empty and 'Valuta' in df_storico.columns:
         st.dataframe(df_storico, use_container_width=True)
-        flusso_di_cassa = pd.to_numeric(df_storico['Controvalore']).sum()
         
-        if flusso_di_cassa < 0:
-            st.warning(f"💸 **Flusso di Cassa:** {flusso_di_cassa:.2f}")
-        else:
-            st.success(f"💰 **Flusso di Cassa:** +{flusso_di_cassa:.2f}")
+        st.markdown("### 📊 Riepilogo Flusso di Cassa")
+        st.info("💡 *Controvalore negativo (rosso) = Soldi investiti. Controvalore positivo = Soldi incassati.*")
+        
+        # Raggruppiamo i calcoli per valuta!
+        riepilogo_valute = df_storico.groupby('Valuta')['Controvalore'].sum()
+        
+        # Creiamo delle colonne per mostrare i box affiancati
+        col_box1, col_box2 = st.columns(2)
+        
+        for index, (valuta, flusso) in enumerate(riepilogo_valute.items()):
+            with [col_box1, col_box2][index % 2]:
+                if flusso < 0:
+                    st.warning(f"💸 **Flusso di Cassa ({valuta}):** {flusso:.2f}")
+                else:
+                    st.success(f"💰 **Flusso di Cassa ({valuta}):** +{flusso:.2f}")
     else:
-        st.write("Nessuna operazione registrata. Il database è vuoto.")
+        st.write("Nessuna operazione registrata o colonna 'Valuta' mancante nel database.")
