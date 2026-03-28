@@ -6,11 +6,15 @@ import requests
 import json
 import os
 
-# Carico le credenziali dagli ENV di GitHub
-creds_dict = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
-sheet_url = os.environ["GOOGLE_SHEET_URL"]
-token = os.environ["TELEGRAM_TOKEN"]
-chat_id = os.environ["TELEGRAM_CHAT_ID"]
+# Carico le credenziali gestendo eventuali errori di stringa
+gcp_json = os.environ.get("GCP_SERVICE_ACCOUNT")
+if not gcp_json:
+    raise ValueError("Il segreto GCP_SERVICE_ACCOUNT è vuoto o non trovato!")
+
+creds_dict = json.loads(gcp_json)
+sheet_url = os.environ.get("GOOGLE_SHEET_URL")
+token = os.environ.get("TELEGRAM_TOKEN")
+chat_id = os.environ.get("TELEGRAM_CHAT_ID")
 
 def manda_telegram(msg):
     url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={msg}&parse_mode=Markdown"
