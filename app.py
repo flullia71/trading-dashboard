@@ -5,9 +5,10 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
+# --- 1. CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Trading Terminal Pro", layout="wide")
 
-# --- CONNESSIONE GOOGLE SHEETS ---
+# --- 2. CONNESSIONE GOOGLE SHEETS ---
 @st.cache_resource
 def get_google_sheet_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -41,11 +42,11 @@ def carica_storico():
     dati = sheet_main.get_all_records()
     return pd.DataFrame(dati) if dati else pd.DataFrame(columns=['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore', 'Valuta'])
 
-# --- CARICAMENTO DATI ---
+# Caricamento Dati Iniziale
 ticker_persistenti = carica_ticker_config()
 df_storico = carica_storico()
 
-# --- SIDEBAR ---
+# --- 3. SIDEBAR (PANNELLO COMANDI) ---
 st.sidebar.header("📋 Radar Setup")
 lista_ticker_str = ", ".join(ticker_persistenti) if ticker_persistenti else "AAPL, NVDA, UCG.MI"
 tickers_input = st.sidebar.text_area("Azioni da monitorare:", value=lista_ticker_str, height=150)
@@ -68,4 +69,46 @@ capitale_totale = st.sidebar.number_input("Capitale Totale", value=10000)
 rischio_percent = st.sidebar.slider("Investimento per trade %", 1, 20, 5)
 capitale_per_trade = capitale_totale * (rischio_percent / 100)
 
-# ---
+# --- 4. INTERFACCIA PRINCIPALE (TABS) ---
+st.title("📊 Trading Terminal Pro")
+tab_scanner, tab_diario = st.tabs(["🚀 Scanner di Mercato", "📓 Diario Operazioni"])
+
+# --- SCHEDA 1: SCANNER ---
+with tab_scanner:
+    if st.button("🔍 Scansiona Ora", type="primary"):
+        st.write("Analisi in corso...")
+        cols = st.columns(3)
+        for i, ticker in enumerate(tickers_attuali):
+            try:
+                # Controllo Portafoglio (da GSheets)
+                quote = 0
+                if not df_storico.empty:
+                    st_t = df_storico[df_storico['Ticker'] == ticker]
+                    # Assicuriamoci che i dati siano numerici per sommarli
+                    q_buy = pd.to_numeric(st_t[st_t['Azione'] == 'Acquisto (Buy)']['Quantita']).sum()
+                    q_sell = pd.to_numeric(st_t[st_t['Azione'] == 'Vendita (Sell)']['Quantita']).sum()
+                    quote = q_buy - q_sell
+
+                # Scarico Dati
+                s = yf.Ticker(ticker)
+                h = s.history(period="2y")
+                if h.empty: continue
+                
+                # Calcoli Tecnici
+                h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
+                sma = h['Close'].rolling(20).mean()
+                std = h['Close'].rolling(20).std()
+                h['BBL'] = sma - (std * bb_std)
+                h['BBU'] = sma + (std * bb_std)
+                
+                delta = h['Close'].diff()
+                up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+                ema_up = up.ewm(com=13, adjust=False).mean()
+                ema_dw = dw.ewm(com=13, adjust=False).mean()
+                h['RSI'] = 100 - (100 / (1 + (ema_up / ema_dw)))
+                
+                last = h.iloc[-1]
+                px = last['Close']; rsi_v = last['RSI']; ema_v = last['EMA']
+                bbl = last['BBL']; bbu = last['BBU']
+                
+                #
