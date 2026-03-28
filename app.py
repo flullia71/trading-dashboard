@@ -45,7 +45,7 @@ def carica_storico():
 ticker_persistenti = carica_ticker_config()
 df_storico = carica_storico()
 
-# --- SIDEBAR (PARAMETRI RIPRISTINATI) ---
+# --- SIDEBAR ---
 st.sidebar.header("📋 Radar Setup")
 lista_ticker_str = ", ".join(ticker_persistenti) if ticker_persistenti else "AAPL, NVDA, UCG.MI"
 tickers_input = st.sidebar.text_area("Azioni da monitorare:", value=lista_ticker_str, height=150)
@@ -68,32 +68,4 @@ capitale_totale = st.sidebar.number_input("Capitale Totale", value=10000)
 rischio_percent = st.sidebar.slider("Investimento per trade %", 1, 20, 5)
 capitale_per_trade = capitale_totale * (rischio_percent / 100)
 
-# --- TABS ---
-tab_scanner, tab_diario = st.tabs(["🚀 Scanner", "📓 Diario"])
-
-with tab_scanner:
-    if st.button("🔍 Scansiona Ora", type="primary"):
-        cols = st.columns(3)
-        for i, ticker in enumerate(tickers_attuali):
-            try:
-                # Controllo Portafoglio
-                quote = 0
-                if not df_storico.empty:
-                    st_t = df_storico[df_storico['Ticker'] == ticker]
-                    quote = pd.to_numeric(st_t[st_t['Azione'] == 'Acquisto (Buy)']['Quantita']).sum() - \
-                            pd.to_numeric(st_t[st_t['Azione'] == 'Vendita (Sell)']['Quantita']).sum()
-
-                # Dati Market
-                s = yf.Ticker(ticker)
-                h = s.history(period="2y")
-                if h.empty: continue
-                
-                # Calcoli Tecnici
-                h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
-                sma = h['Close'].rolling(20).mean(); std = h['Close'].rolling(20).std()
-                h['BBL'] = sma - (std * bb_std); h['BBU'] = sma + (std * bb_std)
-                d = h['Close'].diff(); u = d.clip(lower=0); dw = -1*d.clip(upper=0)
-                h['RSI'] = 100 - (100/(1+(u.ewm(com=13).mean()/dw.ewm(com=13).mean())))
-                
-                last = h.iloc[-1]
-                px = last['Close']; rsi = last['RSI']; ema_val = last['EMA']; bbl = last['BBL']; bbu = last['BBU']
+# ---
