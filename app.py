@@ -129,4 +129,25 @@ with tab_scanner:
 with tab_diario:
     st.subheader("📝 Registra Operazione")
     with st.form("new_trade", clear_on_submit=True):
-        c1, c2
+        c1, c2, c3, c4, c5 = st.columns(5)
+        f_t = c1.text_input("Ticker").upper()
+        f_a = c2.selectbox("Azione", ["Acquisto (Buy)", "Vendita (Sell)"])
+        f_p = c3.number_input("Prezzo", min_value=0.01)
+        f_q = c4.number_input("Quantità", min_value=1)
+        f_v = c5.selectbox("Valuta", ["$", "€"])
+        if st.form_submit_button("💾 Salva"):
+            m = -1 if f_a == "Acquisto (Buy)" else 1
+            riga = [datetime.now().strftime("%Y-%m-%d %H:%M"), f_t, f_a, f_p, f_q, f_p*f_q*m, f_v]
+            sheet_main.append_row(riga)
+            st.success("Registrato!"); st.rerun()
+
+    st.markdown("---")
+    st.subheader("📓 Storico Operazioni")
+    if df_storico.empty:
+        st.info("Nessuna operazione trovata.")
+    else:
+        st.dataframe(df_storico, use_container_width=True)
+
+with tab_backtest:
+    st.info("Seleziona un ticker e avvia il test per vedere i risultati storici.")
+    # [Logica Backtest uguale a prima...]
