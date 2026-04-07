@@ -25,6 +25,7 @@ def get_google_sheet_client():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
+# Connessione
 client = get_google_sheet_client()
 sheet_url = st.secrets["google_sheet_url"]
 workbook = client.open_by_url(sheet_url)
@@ -51,101 +52,81 @@ if st.sidebar.button("💾 Salva Lista Cloud"):
     st.sidebar.success("Sincronizzata!"); st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎯 Strategia Attiva")
+st.sidebar.header("🎯 Strategia")
 strategia = st.sidebar.radio("Seleziona Motore:", ["Pullback (RSI + Bollinger)", "Trend Crossover (MACD)"])
 ema_len = st.sidebar.number_input("Periodo EMA (Trend)", value=200)
 
-st.sidebar.markdown("---")
-st.sidebar.header("💰 Money Management")
-capitale_totale = st.sidebar.number_input("Capitale Totale Disponibile", value=10000)
-rischio_percent = st.sidebar.slider("Investimento per trade %", 1, 20, 5)
-cap_trade = capitale_totale * (rischio_percent / 100)
-
 # --- 3. CARICAMENTO DATI DIARIO ---
-colonne_diario = ['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore', 'Valuta']
+colonne_attese = ['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore', 'Valuta']
 try:
-    dati_s = sheet_main.get_all_records()
-    if not dati_s:
-        # Se il foglio è vuoto, inizializza le intestazioni
-        sheet_main.update('A1', [colonne_diario])
-        df_storico = pd.DataFrame(columns=colonne_diario)
+    dati_raw = sheet_main.get_all_records()
+    if not dati_raw:
+        df_storico = pd.DataFrame(columns=colonne_attese)
     else:
-        df_storico = pd.DataFrame(dati_s)
+        df_storico = pd.DataFrame(dati_raw)
+        # Pulizia dati per calcoli
+        df_storico['Quantita'] = pd.to_numeric(df_storico['Quantita'], errors='coerce').fillna(0)
+        df_storico['Controvalore'] = pd.to_numeric(df_storico['Controvalore'], errors='coerce').fillna(0)
+        df_storico['Prezzo'] = pd.to_numeric(df_storico['Prezzo'], errors='coerce').fillna(0)
 except Exception as e:
-    st.error(f"Errore caricamento Diario: {e}")
-    df_storico = pd.DataFrame(columns=colonne_diario)
+    st.error(f"Errore connessione Diario: {e}")
+    df_storico = pd.DataFrame(columns=colonne_attese)
 
 # --- 4. INTERFACCIA TABS ---
 st.title("📊 Trading Terminal Pro")
 tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "🧪 Backtesting", "📓 Diario"])
 
-# --- TAB SCANNER & PORTAFOGLIO ---
 with tab_scanner:
-    if st.button("🔍 Avvia Analisi in Tempo Reale", type="primary"):
-        pnl_container = st.container()
+    if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
+        st.subheader("💰 Performance Portafoglio Attuale")
+        pnl_sum = st.container()
         st.markdown("---")
+        
         cols = st.columns(3)
-        p_euro, p_usd = 0.0, 0.0
+        tot_eur, tot_usd = 0.0, 0.0
         
         for i, ticker in enumerate(tickers_attuali):
             try:
-                # Analisi Portafoglio per Ticker
-                quote, cash_flow, valuta_t = 0, 0.0, "$"
+                # 1. Calcoli Portafoglio
+                quote, cash_flow, valuta = 0, 0.0, "$"
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
-                    st_t = df_storico[df_storico['Ticker'] == ticker].copy()
-                    if not st_t.empty:
-                        st_t['Quantita'] = pd.to_numeric(st_t['Quantita'], errors='coerce').fillna(0)
-                        st_t['Controvalore'] = pd.to_numeric(st_t['Controvalore'], errors='coerce').fillna(0)
-                        
-                        q_buy = st_t[st_t['Azione'] == 'Acquisto (Buy)']['Quantita'].sum()
-                        q_sell = st_t[st_t['Azione'] == 'Vendita (Sell)']['Quantita'].sum()
-                        quote = q_buy - q_sell
-                        cash_flow = st_t['Controvalore'].sum()
-                        valuta_t = st_t.iloc[0]['Valuta']
+                    st_t = df_storico[df_storico['Ticker'] == ticker]
+                    q_buy = st_t[st_t['Azione'] == 'Acquisto (Buy)']['Quantita'].sum()
+                    q_sell = st_t[st_t['Azione'] == 'Vendita (Sell)']['Quantita'].sum()
+                    quote = q_buy - q_sell
+                    cash_flow = st_t['Controvalore'].sum() # Negativo = Uscita soldi, Positivo = Entrata
+                    if not st_t.empty: valuta = st_t.iloc[0]['Valuta']
 
-                # Market Data
+                # 2. Dati Mercato
                 s = yf.Ticker(ticker); h = s.history(period="2y")
                 if h.empty: continue
                 
                 px = h.iloc[-1]['Close']
-                valore_attuale = px * quote
-                pnl_u = cash_flow + valore_attuale if quote > 0 else 0.0
+                val_mercato = px * quote
+                pnl_u = cash_flow + val_mercato if quote > 0 else 0.0
                 
-                if valuta_t == "€": p_euro += pnl_u
-                else: p_usd += pnl_u
+                if valuta == "€": tot_eur += pnl_u
+                else: tot_usd += pnl_u
 
+                # 3. Visualizzazione
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
-                    st.write(f"Prezzo: {px:.2f} {valuta_t}")
+                    st.write(f"Prezzo: {px:.2f} {valuta}")
                     if quote > 0:
-                        col = "green" if pnl_u >= 0 else "red"
-                        st.markdown(f"**P&L:** :{col}[{pnl_u:.2f} {valuta_t}]")
-                        st.caption(f"Q.tà: {int(quote)} | Valore: {valore_attuale:.2f}")
+                        c_pnl = "green" if pnl_u >= 0 else "red"
+                        st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_u:.2f} {valuta}]")
+                        st.caption(f"Q.tà in carico: {int(quote)} | Valore: {val_mercato:.2f}")
+                    else:
+                        st.write("⚪ Nessuna posizione")
                     st.markdown("---")
             except: pass
         
-        with pnl_container:
+        with pnl_sum:
             c1, c2 = st.columns(2)
-            c1.metric("P&L Totale Euro", f"{p_euro:.2f} €")
-            c2.metric("P&L Totale USD", f"{p_usd:.2f} $")
+            c1.metric("P&L Globale Euro", f"{tot_eur:.2f} €")
+            c2.metric("P&L Globale USD", f"{tot_usd:.2f} $")
 
-# --- TAB DIARIO (FIXED) ---
 with tab_diario:
-    st.subheader("📝 Registra Nuova Transazione")
-    with st.form("trade_form", clear_on_submit=True):
-        c1, c2, c3, c4, c5 = st.columns(5)
-        f_t = c1.text_input("Ticker").upper()
-        f_a = c2.selectbox("Azione", ["Acquisto (Buy)", "Vendita (Sell)"])
-        f_p = c3.number_input("Prezzo", min_value=0.01)
-        f_q = c4.number_input("Quantità", min_value=1)
-        f_v = c5.selectbox("Valuta", ["$", "€"])
-        if st.form_submit_button("💾 Salva nel Cloud"):
-            if f_t:
-                m = -1 if f_a == "Acquisto (Buy)" else 1
-                nuova_riga = [datetime.now().strftime("%Y-%m-%d %H:%M"), f_t, f_a, f_p, f_q, f_p*f_q*m, f_v]
-                sheet_main.append_row(nuova_riga)
-                st.success("Operazione registrata!")
-                st.rerun()
-
-    st.markdown("---")
-    st.subheader("📓 Storico Operazioni")
+    st.subheader("📝 Registra Operazione")
+    with st.form("new_trade", clear_on_submit=True):
+        c1, c2
