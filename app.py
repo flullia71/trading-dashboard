@@ -64,7 +64,7 @@ try:
         df_storico = pd.DataFrame(columns=colonne_attese)
     else:
         df_storico = pd.DataFrame(dati_raw)
-        # Pulizia dati per calcoli
+        # Pulizia dati per calcoli matematici sicuri
         df_storico['Quantita'] = pd.to_numeric(df_storico['Quantita'], errors='coerce').fillna(0)
         df_storico['Controvalore'] = pd.to_numeric(df_storico['Controvalore'], errors='coerce').fillna(0)
         df_storico['Prezzo'] = pd.to_numeric(df_storico['Prezzo'], errors='coerce').fillna(0)
@@ -78,53 +78,92 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
-        st.subheader("💰 Performance Portafoglio Attuale")
         pnl_sum = st.container()
         st.markdown("---")
         
         cols = st.columns(3)
-        tot_eur, tot_usd = 0.0, 0.0
+        
+        # Variabili di accumulo globale per USD e EUR
+        tot_usd_unrealized, tot_usd_realized, tot_usd_total = 0.0, 0.0, 0.0
+        tot_eur_unrealized, tot_eur_realized, tot_eur_total = 0.0, 0.0, 0.0
         
         for i, ticker in enumerate(tickers_attuali):
             try:
-                # 1. Calcoli Portafoglio
-                quote, cash_flow, valuta = 0, 0.0, "$"
+                # 1. Contabilità per singolo Ticker
+                quote, pnl_unrealized, pnl_realized, valuta = 0, 0.0, 0.0, "$"
+                pmc, val_mercato = 0.0, 0.0
+                
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
                     st_t = df_storico[df_storico['Ticker'] == ticker]
-                    q_buy = st_t[st_t['Azione'] == 'Acquisto (Buy)']['Quantita'].sum()
-                    q_sell = st_t[st_t['Azione'] == 'Vendita (Sell)']['Quantita'].sum()
-                    quote = q_buy - q_sell
-                    cash_flow = st_t['Controvalore'].sum() # Negativo = Uscita soldi, Positivo = Entrata
-                    if not st_t.empty: valuta = st_t.iloc[0]['Valuta']
+                    if not st_t.empty:
+                        valuta = st_t.iloc[0]['Valuta']
+                        
+                        acquisti = st_t[st_t['Azione'] == 'Acquisto (Buy)']
+                        q_buy = acquisti['Quantita'].sum()
+                        costi_buy = abs(acquisti['Controvalore'].sum())
+                        # Prezzo Medio di Carico
+                        pmc = costi_buy / q_buy if q_buy > 0 else 0.0
+                        
+                        vendite = st_t[st_t['Azione'] == 'Vendita (Sell)']
+                        q_sell = vendite['Quantita'].sum()
+                        
+                        quote = q_buy - q_sell
+                        cash_flow = st_t['Controvalore'].sum() # Netto flussi di cassa storici
 
-                # 2. Dati Mercato
-                s = yf.Ticker(ticker); h = s.history(period="2y")
-                if h.empty: continue
-                
-                px = h.iloc[-1]['Close']
-                val_mercato = px * quote
-                pnl_u = cash_flow + val_mercato if quote > 0 else 0.0
-                
-                if valuta == "€": tot_eur += pnl_u
-                else: tot_usd += pnl_u
+                        # 2. Dati Mercato
+                        s = yf.Ticker(ticker); h = s.history(period="2y")
+                        if not h.empty:
+                            px = h.iloc[-1]['Close']
+                            val_mercato = px * quote
+                            
+                            # Calcolo Profitti
+                            pnl_unrealized = (px - pmc) * quote if quote > 0 else 0.0
+                            pnl_total = cash_flow + val_mercato
+                            pnl_realized = pnl_total - pnl_unrealized
+                            
+                            # Accumulo nei totali globali
+                            if valuta == "€":
+                                tot_eur_unrealized += pnl_unrealized
+                                tot_eur_realized += pnl_realized
+                                tot_eur_total += pnl_total
+                            else:
+                                tot_usd_unrealized += pnl_unrealized
+                                tot_usd_realized += pnl_realized
+                                tot_usd_total += pnl_total
 
-                # 3. Visualizzazione
-                with cols[i % 3]:
-                    st.subheader(f"🏢 {ticker}")
-                    st.write(f"Prezzo: {px:.2f} {valuta}")
-                    if quote > 0:
-                        c_pnl = "green" if pnl_u >= 0 else "red"
-                        st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_u:.2f} {valuta}]")
-                        st.caption(f"Q.tà in carico: {int(quote)} | Valore: {val_mercato:.2f}")
-                    else:
-                        st.write("⚪ Nessuna posizione")
-                    st.markdown("---")
+                            # 3. Visualizzazione Singolo Ticker
+                            with cols[i % 3]:
+                                st.subheader(f"🏢 {ticker}")
+                                st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
+                                
+                                if quote > 0:
+                                    c_pnl = "green" if pnl_unrealized >= 0 else "red"
+                                    st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_unrealized:.2f} {valuta}]")
+                                    st.caption(f"In carico: {int(quote)} q. | PMC: {pmc:.2f} | Valore: {val_mercato:.2f}")
+                                    if pnl_realized != 0:
+                                        st.caption(f"Profitti passati incassati: {pnl_realized:.2f} {valuta}")
+                                else:
+                                    if pnl_realized != 0:
+                                        c_real = "green" if pnl_realized > 0 else "red"
+                                        st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
+                                    else:
+                                        st.write("⚪ Nessuna operazione in archivio")
+                                st.markdown("---")
             except: pass
         
+        # 4. Aggiornamento Container Globale (In alto)
         with pnl_sum:
-            c1, c2 = st.columns(2)
-            c1.metric("P&L Globale Euro", f"{tot_eur:.2f} €")
-            c2.metric("P&L Globale USD", f"{tot_usd:.2f} $")
+            st.markdown("#### 💵 Portafoglio USD ($)")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("P&L Attivo (Posizioni Aperte)", f"{tot_usd_unrealized:.2f} $")
+            c2.metric("P&L Realizzato (Trade Chiusi)", f"{tot_usd_realized:.2f} $")
+            c3.metric("P&L Globale Totale", f"{tot_usd_total:.2f} $")
+
+            st.markdown("#### 💶 Portafoglio EUR (€)")
+            c4, c5, c6 = st.columns(3)
+            c4.metric("P&L Attivo (Posizioni Aperte)", f"{tot_eur_unrealized:.2f} €")
+            c5.metric("P&L Realizzato (Trade Chiusi)", f"{tot_eur_realized:.2f} €")
+            c6.metric("P&L Globale Totale", f"{tot_eur_total:.2f} €")
 
 with tab_diario:
     st.subheader("📝 Registra Operazione")
@@ -148,6 +187,47 @@ with tab_diario:
     else:
         st.dataframe(df_storico, use_container_width=True)
 
+# --- SCHEDA 2: BACKTESTING ---
 with tab_backtest:
-    st.info("Seleziona un ticker e avvia il test per vedere i risultati storici.")
-    # [Logica Backtest uguale a prima...]
+    st.subheader(f"🧪 Simulatore - {strategia}")
+    sel_ticker = st.selectbox("Seleziona Titolo per il Test:", tickers_attuali)
+    periodo_test = st.radio("Orizzonte Temporale:", ["2y", "5y", "max"], horizontal=True)
+    
+    if st.button("🧪 Avvia Stress Test"):
+        data = yf.Ticker(sel_ticker).history(period=periodo_test)
+        if len(data) > ema_len:
+            # Calcoli completi per il backtest
+            data['EMA'] = data['Close'].ewm(span=ema_len, adjust=False).mean()
+            sma = data['Close'].rolling(20).mean(); std = data['Close'].rolling(20).std()
+            data['BBL'] = sma - (std * 2); data['BBU'] = sma + (std * 2)
+            delta = data['Close'].diff(); up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+            data['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
+            data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
+            data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+            
+            cap = capitale_totale; pos = []; in_pos = False; qty = 0
+            for i in range(ema_len, len(data)):
+                row = data.iloc[i]; prev = data.iloc[i-1]
+                
+                # Condizioni in base alla strategia scelta
+                if strategia == "Trend Crossover (MACD)":
+                    buy_cond = (prev['MACD'] < prev['MACD_Signal']) and (row['MACD'] > row['MACD_Signal']) and (row['Close'] > row['EMA'])
+                    sell_cond = (prev['MACD'] > prev['MACD_Signal']) and (row['MACD'] < row['MACD_Signal'])
+                else:
+                    buy_cond = (row['Close'] > row['EMA']) and (row['Close'] <= row['BBL']) and (row['RSI'] < rsi_soglia_buy)
+                    sell_cond = (row['Close'] >= row['BBU']) or (row['RSI'] > rsi_soglia_sell)
+
+                if not in_pos and buy_cond:
+                    qty = cap // row['Close']; cap -= qty * row['Close']
+                    pos.append({'Entrata': row.name, 'Prezzo E': row['Close']}); in_pos = True
+                elif in_pos and sell_cond:
+                    cap += qty * row['Close']
+                    pos[-1].update({'Uscita': row.name, 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
+                    in_pos = False
+            
+            if pos and 'P/L' in pos[-1]:
+                df_res = pd.DataFrame([p for p in pos if 'P/L' in p])
+                st.metric("P/L Totale Strategia", f"{df_res['P/L'].sum():.2f} €/$")
+                st.line_chart(df_res['P/L'].cumsum())
+                st.dataframe(df_res)
+            else: st.warning("Nessuna operazione conclusa nel periodo scelto.")
