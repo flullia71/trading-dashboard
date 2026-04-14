@@ -64,7 +64,6 @@ try:
         df_storico = pd.DataFrame(columns=colonne_attese)
     else:
         df_storico = pd.DataFrame(dati_raw)
-        # Pulizia dati per calcoli matematici sicuri
         df_storico['Quantita'] = pd.to_numeric(df_storico['Quantita'], errors='coerce').fillna(0)
         df_storico['Controvalore'] = pd.to_numeric(df_storico['Controvalore'], errors='coerce').fillna(0)
         df_storico['Prezzo'] = pd.to_numeric(df_storico['Prezzo'], errors='coerce').fillna(0)
@@ -78,14 +77,18 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
+        # Contenitore per i riepiloghi globali in cima
         pnl_sum = st.container()
         st.markdown("---")
+        st.subheader("📡 Radar Segnali di Mercato")
         
         cols = st.columns(3)
         
-        # Variabili di accumulo globale per USD e EUR
         tot_usd_unrealized, tot_usd_realized, tot_usd_total = 0.0, 0.0, 0.0
         tot_eur_unrealized, tot_eur_realized, tot_eur_total = 0.0, 0.0, 0.0
+        
+        # Lista per raccogliere i dati della tabella di sintesi
+        portafoglio_aperto = []
         
         for i, ticker in enumerate(tickers_attuali):
             try:
@@ -101,14 +104,13 @@ with tab_scanner:
                         acquisti = st_t[st_t['Azione'] == 'Acquisto (Buy)']
                         q_buy = acquisti['Quantita'].sum()
                         costi_buy = abs(acquisti['Controvalore'].sum())
-                        # Prezzo Medio di Carico
                         pmc = costi_buy / q_buy if q_buy > 0 else 0.0
                         
                         vendite = st_t[st_t['Azione'] == 'Vendita (Sell)']
                         q_sell = vendite['Quantita'].sum()
                         
                         quote = q_buy - q_sell
-                        cash_flow = st_t['Controvalore'].sum() # Netto flussi di cassa storici
+                        cash_flow = st_t['Controvalore'].sum()
 
                         # 2. Dati Mercato
                         s = yf.Ticker(ticker); h = s.history(period="2y")
@@ -121,6 +123,19 @@ with tab_scanner:
                             pnl_total = cash_flow + val_mercato
                             pnl_realized = pnl_total - pnl_unrealized
                             
+                            # --- NUOVO: Aggiunta alla vista sintetica ---
+                            if quote > 0:
+                                res_perc = ((px - pmc) / pmc * 100) if pmc > 0 else 0.0
+                                portafoglio_aperto.append({
+                                    "Ticker": ticker,
+                                    "Quantità": int(quote),
+                                    "PMC": round(pmc, 2),
+                                    "Prezzo Attuale": round(px, 2),
+                                    "P&L Attivo": round(pnl_unrealized, 2),
+                                    "Resa %": round(res_perc, 2),
+                                    "Valuta": valuta
+                                })
+                            
                             # Accumulo nei totali globali
                             if valuta == "€":
                                 tot_eur_unrealized += pnl_unrealized
@@ -131,7 +146,7 @@ with tab_scanner:
                                 tot_usd_realized += pnl_realized
                                 tot_usd_total += pnl_total
 
-                            # 3. Visualizzazione Singolo Ticker
+                            # 3. Visualizzazione Singolo Ticker (Radar)
                             with cols[i % 3]:
                                 st.subheader(f"🏢 {ticker}")
                                 st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
@@ -139,31 +154,48 @@ with tab_scanner:
                                 if quote > 0:
                                     c_pnl = "green" if pnl_unrealized >= 0 else "red"
                                     st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_unrealized:.2f} {valuta}]")
-                                    st.caption(f"In carico: {int(quote)} q. | PMC: {pmc:.2f} | Valore: {val_mercato:.2f}")
-                                    if pnl_realized != 0:
-                                        st.caption(f"Profitti passati incassati: {pnl_realized:.2f} {valuta}")
+                                elif pnl_realized != 0:
+                                    c_real = "green" if pnl_realized > 0 else "red"
+                                    st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
                                 else:
-                                    if pnl_realized != 0:
-                                        c_real = "green" if pnl_realized > 0 else "red"
-                                        st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
-                                    else:
-                                        st.write("⚪ Nessuna operazione in archivio")
+                                    st.write("⚪ Nessuna operazione in archivio")
                                 st.markdown("---")
             except: pass
         
-        # 4. Aggiornamento Container Globale (In alto)
+        # 4. Aggiornamento Container Globale (Viene renderizzato IN CIMA alla pagina)
         with pnl_sum:
-            st.markdown("#### 💵 Portafoglio USD ($)")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("P&L Attivo (Posizioni Aperte)", f"{tot_usd_unrealized:.2f} $")
-            c2.metric("P&L Realizzato (Trade Chiusi)", f"{tot_usd_realized:.2f} $")
-            c3.metric("P&L Globale Totale", f"{tot_usd_total:.2f} $")
+            st.markdown("### 💰 Sintesi Portafoglio")
+            
+            # --- VISTA SINTETICA PORTAFOGLIO ---
+            if portafoglio_aperto:
+                df_portafoglio = pd.DataFrame(portafoglio_aperto)
+                # Formattazione per la tabella
+                st.dataframe(
+                    df_portafoglio.style.map(
+                        lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
+                        subset=['P&L Attivo', 'Resa %']
+                    ),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("Nessuna azione attualmente in portafoglio. Controlla il Radar qui sotto per nuove opportunità!")
+            
+            st.markdown("---")
+            
+            # --- METRICHE GLOBALI ---
+            col_us, col_eu = st.columns(2)
+            with col_us:
+                st.markdown("#### 💵 Bilancio USD ($)")
+                st.metric("P&L Attivo (Posizioni Aperte)", f"{tot_usd_unrealized:.2f} $")
+                st.metric("P&L Realizzato (Trade Chiusi)", f"{tot_usd_realized:.2f} $")
+                st.metric("P&L Globale Totale", f"{tot_usd_total:.2f} $")
 
-            st.markdown("#### 💶 Portafoglio EUR (€)")
-            c4, c5, c6 = st.columns(3)
-            c4.metric("P&L Attivo (Posizioni Aperte)", f"{tot_eur_unrealized:.2f} €")
-            c5.metric("P&L Realizzato (Trade Chiusi)", f"{tot_eur_realized:.2f} €")
-            c6.metric("P&L Globale Totale", f"{tot_eur_total:.2f} €")
+            with col_eu:
+                st.markdown("#### 💶 Bilancio EUR (€)")
+                st.metric("P&L Attivo (Posizioni Aperte)", f"{tot_eur_unrealized:.2f} €")
+                st.metric("P&L Realizzato (Trade Chiusi)", f"{tot_eur_realized:.2f} €")
+                st.metric("P&L Globale Totale", f"{tot_eur_total:.2f} €")
 
 with tab_diario:
     st.subheader("📝 Registra Operazione")
