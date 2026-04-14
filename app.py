@@ -89,10 +89,12 @@ with tab_scanner:
         
         for i, ticker in enumerate(tickers_attuali):
             try:
-                # 1. Contabilità per singolo Ticker
-                quote, pnl_unrealized, pnl_realized, valuta = 0, 0.0, 0.0, "$"
-                pmc, val_mercato = 0.0, 0.0
+                # --- FIX: AZZERAMENTO VARIABILI AD OGNI GIRO ---
+                quote, pnl_unrealized, pnl_realized = 0, 0.0, 0.0
+                pmc, val_mercato, cash_flow = 0.0, 0.0, 0.0
+                valuta = "$"
                 
+                # 1. Contabilità per singolo Ticker
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
                     st_t = df_storico[df_storico['Ticker'] == ticker]
                     if not st_t.empty:
@@ -113,7 +115,6 @@ with tab_scanner:
                 h = s.history(period="2y")
                 
                 if h.empty:
-                    # Se Yahoo Finance non ha dati, mostriamo un avviso invece di sparire
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
                         st.warning("⚠️ Simbolo non trovato su Yahoo Finance.")
@@ -168,7 +169,6 @@ with tab_scanner:
                     st.markdown("---")
                     
             except Exception as e:
-                # Se c'è un errore matematico o di connessione, lo mostra in rosso
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
                     st.error("⚠️ Errore di calcolo dati.")
@@ -226,6 +226,7 @@ with tab_diario:
         st.info("Nessuna operazione trovata.")
     else:
         st.dataframe(df_storico, use_container_width=True)
+
 
 # --- SCHEDA 2: BACKTESTING ---
 with tab_backtest:
