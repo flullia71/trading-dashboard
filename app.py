@@ -25,7 +25,6 @@ def get_google_sheet_client():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
-# Connessione
 client = get_google_sheet_client()
 sheet_url = st.secrets["google_sheet_url"]
 workbook = client.open_by_url(sheet_url)
@@ -77,7 +76,6 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
-        # Contenitore per i riepiloghi globali in cima
         pnl_sum = st.container()
         st.markdown("---")
         st.subheader("📡 Radar Segnali di Mercato")
@@ -87,7 +85,6 @@ with tab_scanner:
         tot_usd_unrealized, tot_usd_realized, tot_usd_total = 0.0, 0.0, 0.0
         tot_eur_unrealized, tot_eur_realized, tot_eur_total = 0.0, 0.0, 0.0
         
-        # Lista per raccogliere i dati della tabella di sintesi
         portafoglio_aperto = []
         
         for i, ticker in enumerate(tickers_attuali):
@@ -100,7 +97,6 @@ with tab_scanner:
                     st_t = df_storico[df_storico['Ticker'] == ticker]
                     if not st_t.empty:
                         valuta = st_t.iloc[0]['Valuta']
-                        
                         acquisti = st_t[st_t['Azione'] == 'Acquisto (Buy)']
                         q_buy = acquisti['Quantita'].sum()
                         costi_buy = abs(acquisti['Controvalore'].sum())
@@ -112,64 +108,78 @@ with tab_scanner:
                         quote = q_buy - q_sell
                         cash_flow = st_t['Controvalore'].sum()
 
-                        # 2. Dati Mercato
-                        s = yf.Ticker(ticker); h = s.history(period="2y")
-                        if not h.empty:
-                            px = h.iloc[-1]['Close']
-                            val_mercato = px * quote
-                            
-                            # Calcolo Profitti
-                            pnl_unrealized = (px - pmc) * quote if quote > 0 else 0.0
-                            pnl_total = cash_flow + val_mercato
-                            pnl_realized = pnl_total - pnl_unrealized
-                            
-                            # --- NUOVO: Aggiunta alla vista sintetica ---
-                            if quote > 0:
-                                res_perc = ((px - pmc) / pmc * 100) if pmc > 0 else 0.0
-                                portafoglio_aperto.append({
-                                    "Ticker": ticker,
-                                    "Quantità": int(quote),
-                                    "PMC": round(pmc, 2),
-                                    "Prezzo Attuale": round(px, 2),
-                                    "P&L Attivo": round(pnl_unrealized, 2),
-                                    "Resa %": round(res_perc, 2),
-                                    "Valuta": valuta
-                                })
-                            
-                            # Accumulo nei totali globali
-                            if valuta == "€":
-                                tot_eur_unrealized += pnl_unrealized
-                                tot_eur_realized += pnl_realized
-                                tot_eur_total += pnl_total
-                            else:
-                                tot_usd_unrealized += pnl_unrealized
-                                tot_usd_realized += pnl_realized
-                                tot_usd_total += pnl_total
+                # 2. Dati Mercato (Con gestione dell'errore visibile)
+                s = yf.Ticker(ticker)
+                h = s.history(period="2y")
+                
+                if h.empty:
+                    # Se Yahoo Finance non ha dati, mostriamo un avviso invece di sparire
+                    with cols[i % 3]:
+                        st.subheader(f"🏢 {ticker}")
+                        st.warning("⚠️ Simbolo non trovato su Yahoo Finance.")
+                        st.caption("Verifica se il nome è corretto o se manca .MI")
+                        st.markdown("---")
+                    continue
+                    
+                px = h.iloc[-1]['Close']
+                val_mercato = px * quote
+                
+                # Calcolo Profitti
+                pnl_unrealized = (px - pmc) * quote if quote > 0 else 0.0
+                pnl_total = cash_flow + val_mercato
+                pnl_realized = pnl_total - pnl_unrealized
+                
+                # Aggiunta alla vista sintetica
+                if quote > 0:
+                    res_perc = ((px - pmc) / pmc * 100) if pmc > 0 else 0.0
+                    portafoglio_aperto.append({
+                        "Ticker": ticker,
+                        "Quantità": int(quote),
+                        "PMC": round(pmc, 2),
+                        "Prezzo Attuale": round(px, 2),
+                        "P&L Attivo": round(pnl_unrealized, 2),
+                        "Resa %": round(res_perc, 2),
+                        "Valuta": valuta
+                    })
+                
+                # Accumulo Totali
+                if valuta == "€":
+                    tot_eur_unrealized += pnl_unrealized
+                    tot_eur_realized += pnl_realized
+                    tot_eur_total += pnl_total
+                else:
+                    tot_usd_unrealized += pnl_unrealized
+                    tot_usd_realized += pnl_realized
+                    tot_usd_total += pnl_total
 
-                            # 3. Visualizzazione Singolo Ticker (Radar)
-                            with cols[i % 3]:
-                                st.subheader(f"🏢 {ticker}")
-                                st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
-                                
-                                if quote > 0:
-                                    c_pnl = "green" if pnl_unrealized >= 0 else "red"
-                                    st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_unrealized:.2f} {valuta}]")
-                                elif pnl_realized != 0:
-                                    c_real = "green" if pnl_realized > 0 else "red"
-                                    st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
-                                else:
-                                    st.write("⚪ Nessuna operazione in archivio")
-                                st.markdown("---")
-            except: pass
+                # 3. Visualizzazione Singolo Ticker (Radar)
+                with cols[i % 3]:
+                    st.subheader(f"🏢 {ticker}")
+                    st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
+                    
+                    if quote > 0:
+                        c_pnl = "green" if pnl_unrealized >= 0 else "red"
+                        st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_unrealized:.2f} {valuta}]")
+                    elif pnl_realized != 0:
+                        c_real = "green" if pnl_realized > 0 else "red"
+                        st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
+                    else:
+                        st.write("⚪ In monitoraggio")
+                    st.markdown("---")
+                    
+            except Exception as e:
+                # Se c'è un errore matematico o di connessione, lo mostra in rosso
+                with cols[i % 3]:
+                    st.subheader(f"🏢 {ticker}")
+                    st.error("⚠️ Errore di calcolo dati.")
+                    st.caption(f"Dettaglio: {e}")
+                    st.markdown("---")
         
-        # 4. Aggiornamento Container Globale (Viene renderizzato IN CIMA alla pagina)
+        # 4. Aggiornamento Container Globale
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
-            
-            # --- VISTA SINTETICA PORTAFOGLIO ---
             if portafoglio_aperto:
                 df_portafoglio = pd.DataFrame(portafoglio_aperto)
-                # Formattazione per la tabella
                 st.dataframe(
                     df_portafoglio.style.map(
                         lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
@@ -179,11 +189,9 @@ with tab_scanner:
                     hide_index=True
                 )
             else:
-                st.info("Nessuna azione attualmente in portafoglio. Controlla il Radar qui sotto per nuove opportunità!")
+                st.info("Nessuna azione attualmente in portafoglio.")
             
             st.markdown("---")
-            
-            # --- METRICHE GLOBALI ---
             col_us, col_eu = st.columns(2)
             with col_us:
                 st.markdown("#### 💵 Bilancio USD ($)")
