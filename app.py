@@ -124,7 +124,6 @@ with tab_scanner:
                         st.markdown("---")
                     continue
                 
-                # --- RIPRISTINO DEL CERVELLO TECNICO ---
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean(); std = h['Close'].rolling(20).std()
                 h['BBL'] = sma - (std * 2); h['BBU'] = sma + (std * 2)
@@ -138,21 +137,25 @@ with tab_scanner:
                 px = last['Close']
                 val_mercato = px * quote
                 
-                # --- CALCOLO SEGNALI VISIVI ---
+                # --- CALCOLO SEGNALI VISIVI E TESTO TELEGRAM ---
                 if strategia == "Trend Crossover (MACD)":
                     macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
                     macd_cross_down = (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal'])
                     
                     if quote > 0 and macd_cross_down:
-                        segnale_ui = "🔴 SEGNALE SELL (MACD)"
+                        segnale_ui = f"🔴 *SELL (MACD)*: {ticker} a {px:.2f} {valuta}"
                     elif quote == 0 and macd_cross_up and (px > last['EMA']):
-                        segnale_ui = "🟢 SEGNALE BUY (MACD)"
+                        segnale_ui = f"🟢 *BUY (MACD)*: {ticker} a {px:.2f} {valuta}"
                 
                 elif strategia == "Pullback (RSI + Bollinger)":
                     if quote > 0 and (px >= last['BBU'] or last['RSI'] > rsi_soglia_sell):
-                        segnale_ui = "🔴 SEGNALE SELL (Pullback)"
+                        segnale_ui = f"🔴 *SELL (Pullback)*: {ticker} a {px:.2f} {valuta}"
                     elif quote == 0 and (px > last['EMA']) and (px <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
-                        segnale_ui = "🟢 SEGNALE BUY (Pullback)"
+                        segnale_ui = f"🟢 *BUY (Pullback)*: {ticker} a {px:.2f} {valuta}"
+
+                # >>> IL PEZZO MANCANTE FONDAMENTALE: INVIO IL MESSAGGIO! <<<
+                if segnale_ui:
+                    manda_telegram(segnale_ui)
 
                 # Calcolo Profitti
                 pnl_unrealized = (px - pmc) * quote if quote > 0 else 0.0
@@ -177,9 +180,9 @@ with tab_scanner:
                     st.subheader(f"🏢 {ticker}")
                     st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
                     
-                    # MOSTRO IL SEGNALE SE ESISTE
-                    if segnale_ui.startswith("🟢"): st.success(segnale_ui)
-                    elif segnale_ui.startswith("🔴"): st.error(segnale_ui)
+                    # MOSTRO IL SEGNALE A SCHERMO
+                    if segnale_ui.startswith("🟢"): st.success(segnale_ui.replace("*", ""))
+                    elif segnale_ui.startswith("🔴"): st.error(segnale_ui.replace("*", ""))
                     
                     # MOSTRO LO STATO DEL PORTAFOGLIO
                     if quote > 0:
@@ -248,6 +251,9 @@ with tab_diario:
     else:
         st.dataframe(df_storico, use_container_width=True)
 
+with tab_backtest:
+    st.info("Seleziona un ticker e avvia il test per vedere i risultati storici.")
+    # (Lascia il blocco logico del backtest se lo avevi qui sotto)
 
 # --- SCHEDA 2: BACKTESTING ---
 with tab_backtest:
