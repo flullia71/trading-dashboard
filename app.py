@@ -51,9 +51,11 @@ if st.sidebar.button("💾 Salva Lista Cloud"):
     st.sidebar.success("Sincronizzata!"); st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎯 Strategia")
-strategia = st.sidebar.radio("Seleziona Motore:", ["Pullback (RSI + Bollinger)", "Trend Crossover (MACD)"])
+st.sidebar.header("🎯 Strategia & Indicatori")
+strategia = st.sidebar.radio("Seleziona Motore Segnali:", ["Pullback (RSI + Bollinger)", "Trend Crossover (MACD)"])
 ema_len = st.sidebar.number_input("Periodo EMA (Trend)", value=200)
+rsi_soglia_buy = st.sidebar.slider("Soglia RSI Acquisto", 10, 50, 40)
+rsi_soglia_sell = st.sidebar.slider("Soglia RSI Vendita", 50, 90, 70)
 
 # --- 3. CARICAMENTO DATI DIARIO ---
 colonne_attese = ['Data', 'Ticker', 'Azione', 'Prezzo', 'Quantita', 'Controvalore', 'Valuta']
@@ -89,10 +91,11 @@ with tab_scanner:
         
         for i, ticker in enumerate(tickers_attuali):
             try:
-                # --- FIX: AZZERAMENTO VARIABILI AD OGNI GIRO ---
+                # Azzero variabili
                 quote, pnl_unrealized, pnl_realized = 0, 0.0, 0.0
                 pmc, val_mercato, cash_flow = 0.0, 0.0, 0.0
                 valuta = "$"
+                segnale_ui = "" # Variabile per il semaforo visivo
                 
                 # 1. Contabilità per singolo Ticker
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
@@ -110,69 +113,90 @@ with tab_scanner:
                         quote = q_buy - q_sell
                         cash_flow = st_t['Controvalore'].sum()
 
-                # 2. Dati Mercato (Con gestione dell'errore visibile)
+                # 2. Dati Mercato e Indicatori Tecnici
                 s = yf.Ticker(ticker)
                 h = s.history(period="2y")
                 
                 if h.empty:
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
-                        st.warning("⚠️ Simbolo non trovato su Yahoo Finance.")
-                        st.caption("Verifica se il nome è corretto o se manca .MI")
+                        st.warning("⚠️ Simbolo non trovato.")
                         st.markdown("---")
                     continue
-                    
-                px = h.iloc[-1]['Close']
+                
+                # --- RIPRISTINO DEL CERVELLO TECNICO ---
+                h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
+                sma = h['Close'].rolling(20).mean(); std = h['Close'].rolling(20).std()
+                h['BBL'] = sma - (std * 2); h['BBU'] = sma + (std * 2)
+                delta = h['Close'].diff(); up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+                h['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
+                
+                h['MACD'] = h['Close'].ewm(span=12, adjust=False).mean() - h['Close'].ewm(span=26, adjust=False).mean()
+                h['MACD_Signal'] = h['MACD'].ewm(span=9, adjust=False).mean()
+                
+                last = h.iloc[-1]; prev = h.iloc[-2]
+                px = last['Close']
                 val_mercato = px * quote
                 
+                # --- CALCOLO SEGNALI VISIVI ---
+                if strategia == "Trend Crossover (MACD)":
+                    macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
+                    macd_cross_down = (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal'])
+                    
+                    if quote > 0 and macd_cross_down:
+                        segnale_ui = "🔴 SEGNALE SELL (MACD)"
+                    elif quote == 0 and macd_cross_up and (px > last['EMA']):
+                        segnale_ui = "🟢 SEGNALE BUY (MACD)"
+                
+                elif strategia == "Pullback (RSI + Bollinger)":
+                    if quote > 0 and (px >= last['BBU'] or last['RSI'] > rsi_soglia_sell):
+                        segnale_ui = "🔴 SEGNALE SELL (Pullback)"
+                    elif quote == 0 and (px > last['EMA']) and (px <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
+                        segnale_ui = "🟢 SEGNALE BUY (Pullback)"
+
                 # Calcolo Profitti
                 pnl_unrealized = (px - pmc) * quote if quote > 0 else 0.0
                 pnl_total = cash_flow + val_mercato
                 pnl_realized = pnl_total - pnl_unrealized
                 
-                # Aggiunta alla vista sintetica
                 if quote > 0:
                     res_perc = ((px - pmc) / pmc * 100) if pmc > 0 else 0.0
                     portafoglio_aperto.append({
-                        "Ticker": ticker,
-                        "Quantità": int(quote),
-                        "PMC": round(pmc, 2),
-                        "Prezzo Attuale": round(px, 2),
-                        "P&L Attivo": round(pnl_unrealized, 2),
-                        "Resa %": round(res_perc, 2),
-                        "Valuta": valuta
+                        "Ticker": ticker, "Quantità": int(quote), "PMC": round(pmc, 2),
+                        "Prezzo Attuale": round(px, 2), "P&L Attivo": round(pnl_unrealized, 2),
+                        "Resa %": round(res_perc, 2), "Valuta": valuta
                     })
                 
-                # Accumulo Totali
                 if valuta == "€":
-                    tot_eur_unrealized += pnl_unrealized
-                    tot_eur_realized += pnl_realized
-                    tot_eur_total += pnl_total
+                    tot_eur_unrealized += pnl_unrealized; tot_eur_realized += pnl_realized; tot_eur_total += pnl_total
                 else:
-                    tot_usd_unrealized += pnl_unrealized
-                    tot_usd_realized += pnl_realized
-                    tot_usd_total += pnl_total
+                    tot_usd_unrealized += pnl_unrealized; tot_usd_realized += pnl_realized; tot_usd_total += pnl_total
 
                 # 3. Visualizzazione Singolo Ticker (Radar)
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
                     st.write(f"Prezzo Attuale: {px:.2f} {valuta}")
                     
+                    # MOSTRO IL SEGNALE SE ESISTE
+                    if segnale_ui.startswith("🟢"): st.success(segnale_ui)
+                    elif segnale_ui.startswith("🔴"): st.error(segnale_ui)
+                    
+                    # MOSTRO LO STATO DEL PORTAFOGLIO
                     if quote > 0:
                         c_pnl = "green" if pnl_unrealized >= 0 else "red"
                         st.markdown(f"**P&L In Corso:** :{c_pnl}[{pnl_unrealized:.2f} {valuta}]")
                     elif pnl_realized != 0:
                         c_real = "green" if pnl_realized > 0 else "red"
                         st.markdown(f"**Trade Storico Chiuso:** :{c_real}[{pnl_realized:.2f} {valuta}]")
-                    else:
+                    elif not segnale_ui:
                         st.write("⚪ In monitoraggio")
+                    
                     st.markdown("---")
                     
             except Exception as e:
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
-                    st.error("⚠️ Errore di calcolo dati.")
-                    st.caption(f"Dettaglio: {e}")
+                    st.error("⚠️ Errore dati.")
                     st.markdown("---")
         
         # 4. Aggiornamento Container Globale
@@ -185,8 +209,7 @@ with tab_scanner:
                         lambda x: 'color: green' if isinstance(x, (int, float)) and x > 0 else ('color: red' if isinstance(x, (int, float)) and x < 0 else ''),
                         subset=['P&L Attivo', 'Resa %']
                     ),
-                    use_container_width=True,
-                    hide_index=True
+                    use_container_width=True, hide_index=True
                 )
             else:
                 st.info("Nessuna azione attualmente in portafoglio.")
@@ -197,13 +220,11 @@ with tab_scanner:
                 st.markdown("#### 💵 Bilancio USD ($)")
                 st.metric("P&L Attivo (Posizioni Aperte)", f"{tot_usd_unrealized:.2f} $")
                 st.metric("P&L Realizzato (Trade Chiusi)", f"{tot_usd_realized:.2f} $")
-                st.metric("P&L Globale Totale", f"{tot_usd_total:.2f} $")
 
             with col_eu:
                 st.markdown("#### 💶 Bilancio EUR (€)")
                 st.metric("P&L Attivo (Posizioni Aperte)", f"{tot_eur_unrealized:.2f} €")
                 st.metric("P&L Realizzato (Trade Chiusi)", f"{tot_eur_realized:.2f} €")
-                st.metric("P&L Globale Totale", f"{tot_eur_total:.2f} €")
 
 with tab_diario:
     st.subheader("📝 Registra Operazione")
