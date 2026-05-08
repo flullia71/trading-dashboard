@@ -290,3 +290,67 @@ with tab_backtest:
                 st.line_chart(df_res['P/L'].cumsum())
                 st.dataframe(df_res)
             else: st.warning("Nessuna operazione conclusa nel periodo scelto.")
+with tab_diario:
+    st.subheader("📝 Registra Operazione")
+    with st.form("new_trade", clear_on_submit=True):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        f_t = c1.text_input("Ticker").upper()
+        f_a = c2.selectbox("Azione", ["Acquisto (Buy)", "Vendita (Sell)"])
+        f_p = c3.number_input("Prezzo", min_value=0.01)
+        f_q = c4.number_input("Quantità", min_value=1)
+        f_v = c5.selectbox("Valuta", ["$", "€"])
+        if st.form_submit_button("💾 Salva"):
+            m = -1 if f_a == "Acquisto (Buy)" else 1
+            riga = [datetime.now().strftime("%Y-%m-%d %H:%M"), f_t, f_a, f_p, f_q, f_p*f_q*m, f_v]
+            sheet_main.append_row(riga)
+            st.success("Registrato!"); st.rerun()
+
+    st.markdown("---")
+    st.subheader("📓 Storico Operazioni")
+    if df_storico.empty:
+        st.info("Nessuna operazione trovata.")
+    else:
+        st.dataframe(df_storico, use_container_width=True)
+
+with tab_backtest:
+    st.subheader(f"🧪 Simulatore - {strategia}")
+    sel_ticker = st.selectbox("Seleziona Titolo per il Test:", tickers_attuali)
+    periodo_test = st.radio("Orizzonte Temporale:", ["2y", "5y", "max"], horizontal=True)
+    capitale_totale = st.number_input("Capitale Iniziale Backtest", value=10000)
+    
+    if st.button("🧪 Avvia Stress Test"):
+        data = yf.Ticker(sel_ticker).history(period=periodo_test)
+        if len(data) > ema_len:
+            data['EMA'] = data['Close'].ewm(span=ema_len, adjust=False).mean()
+            sma = data['Close'].rolling(20).mean(); std = data['Close'].rolling(20).std()
+            data['BBL'] = sma - (std * 2); data['BBU'] = sma + (std * 2)
+            delta = data['Close'].diff(); up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+            data['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
+            data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
+            data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+            
+            cap = capitale_totale; pos = []; in_pos = False; qty = 0
+            for i in range(ema_len, len(data)):
+                row = data.iloc[i]; prev = data.iloc[i-1]
+                
+                if strategia == "Trend Crossover (MACD)":
+                    buy_cond = (prev['MACD'] < prev['MACD_Signal']) and (row['MACD'] > row['MACD_Signal']) and (row['Close'] > row['EMA'])
+                    sell_cond = (prev['MACD'] > prev['MACD_Signal']) and (row['MACD'] < row['MACD_Signal'])
+                else:
+                    buy_cond = (row['Close'] > row['EMA']) and (row['Close'] <= row['BBL']) and (row['RSI'] < rsi_soglia_buy)
+                    sell_cond = (row['Close'] >= row['BBU']) or (row['RSI'] > rsi_soglia_sell)
+
+                if not in_pos and buy_cond:
+                    qty = cap // row['Close']; cap -= qty * row['Close']
+                    pos.append({'Entrata': row.name, 'Prezzo E': row['Close']}); in_pos = True
+                elif in_pos and sell_cond:
+                    cap += qty * row['Close']
+                    pos[-1].update({'Uscita': row.name, 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
+                    in_pos = False
+            
+            if pos and 'P/L' in pos[-1]:
+                df_res = pd.DataFrame([p for p in pos if 'P/L' in p])
+                st.metric("P/L Totale Strategia", f"{df_res['P/L'].sum():.2f}")
+                st.line_chart(df_res['P/L'].cumsum())
+                st.dataframe(df_res)
+            else: st.warning("Nessuna operazione conclusa nel periodo scelto.")
