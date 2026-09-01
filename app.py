@@ -131,22 +131,11 @@ with tab_scanner:
                 # 2. SCARICAMENTO DATO SINGOLO CON RETRY
                 h = pd.DataFrame()
                 try:
-                    # obj = yf.Ticker(ticker)
-                    # h = obj.history(period="2y")
+                    obj = yf.Ticker(ticker)
+                    h = obj.history(period="2y")
                     import requests
 
-# Creiamo una sessione con User-Agent di un browser reale per non farsi bloccare da Yahoo
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-})
 
-# Dentro il ciclo for:
-try:
-    obj = yf.Ticker(ticker, session=session)
-    h = obj.history(period="2y")
-except Exception:
-    h = pd.DataFrame()
 except Exception:
     h = pd.DataFrame()
                 
