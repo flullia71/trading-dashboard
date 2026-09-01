@@ -88,11 +88,11 @@ with tab_scanner:
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
 
-        # SCARICAMENTO IN BATCH (Un'unica richiesta per evitare il Rate Limit)
+        # SCARICAMENTO IN BATCH OTTIMIZZATO
         with st.spinner("📥 Scaricamento dati di mercato in corso..."):
             try:
-                # Scarica i dati di tutti i ticker insieme
-                dati_batch = yf.download(tickers_attuali, period="2y", group_by='ticker', threads=True)
+                # Scarichiamo tutti i dati insieme senza raggruppamento per evitare problemi di MultiIndex
+                dati_batch = yf.download(tickers_attuali, period="2y", progress=False)
             except Exception as e:
                 st.error(f"❌ Errore scaricamento generale: {e}")
                 dati_batch = None
@@ -126,13 +126,30 @@ with tab_scanner:
                                 current_quote = 0
                                 current_pmc = 0.0
 
-                # Estrazione dati del singolo ticker dal Batch
-                if dati_batch is not None and ticker in dati_batch:
-                    h = dati_batch[ticker].dropna(subset=['Close'])
-                else:
-                    # Fallback nel caso di ticker singolo
-                    s = yf.Ticker(ticker)
-                    h = s.history(period="2y")
+                # ESTRAZIONE CORRETTA DEI DATI DAL BATCH DATAFRAME
+                h = pd.DataFrame()
+                if dati_batch is not None and not dati_batch.empty:
+                    try:
+                        if len(tickers_attuali) > 1:
+                            # Estrazione sicura per MultiIndex delle colonne
+                            h = pd.DataFrame({
+                                'Close': dati_batch['Close'][ticker],
+                                'High': dati_batch['High'][ticker],
+                                'Low': dati_batch['Low'][ticker],
+                                'Open': dati_batch['Open'][ticker]
+                            }).dropna(subset=['Close'])
+                        else:
+                            h = dati_batch.dropna(subset=['Close'])
+                    except Exception:
+                        h = pd.DataFrame()
+
+                # FALLBACK SE IL BATCH FALLISCE
+                if h.empty: 
+                    try:
+                        s = yf.Ticker(ticker)
+                        h = s.history(period="2y")
+                    except Exception:
+                        h = pd.DataFrame()
                 
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
@@ -141,6 +158,7 @@ with tab_scanner:
                         st.markdown("---")
                     continue
                 
+                # CALCOLO INDICATORI
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean()
                 std = h['Close'].rolling(20).std()
