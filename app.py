@@ -88,14 +88,14 @@ with tab_scanner:
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
 
-        # SCARICAMENTO IN BATCH OTTIMIZZATO
+        # 1. SCARICAMENTO DATI BATCH
         with st.spinner("📥 Scaricamento dati di mercato in corso..."):
             try:
-                # Scarichiamo tutti i dati insieme senza raggruppamento per evitare problemi di MultiIndex
-                dati_batch = yf.download(tickers_attuali, period="2y", progress=False)
+                # Download cumulativo pulito
+                dati_batch = yf.download(tickers_attuali, period="2y", auto_adjust=True, progress=False)
             except Exception as e:
                 st.error(f"❌ Errore scaricamento generale: {e}")
-                dati_batch = None
+                dati_batch = pd.DataFrame()
 
         for i, ticker in enumerate(tickers_attuali):
             try:
@@ -105,19 +105,19 @@ with tab_scanner:
                 valuta_t = "$"
                 segnale_ui = ""
                 
-                # Elaborazione dati dal Diario Google Sheets
-                if not df_storico.empty:
+                # 2. ELABORAZIONE DIARIO GOOGLE SHEETS
+                if not df_storico.empty and 'Ticker' in df_storico.columns:
                     history_t = df_storico[df_storico['Ticker'] == ticker].sort_values('Data')
                     for _, row in history_t.iterrows():
-                        valuta_t = row['Valuta']
-                        tipo = row['Azione']
-                        px_trade = row['Prezzo']
-                        qty_trade = row['Quantita']
+                        valuta_t = str(row.get('Valuta', '$')) if pd.notna(row.get('Valuta')) else "$"
+                        tipo = str(row.get('Azione', ''))
+                        px_trade = float(row.get('Prezzo', 0.0))
+                        qty_trade = float(row.get('Quantita', 0.0))
                         
                         if "Acquisto" in tipo:
                             total_cost = (current_quote * current_pmc) + (qty_trade * px_trade)
                             current_quote += qty_trade
-                            current_pmc = total_cost / current_quote if current_quote > 0 else 0
+                            current_pmc = total_cost / current_quote if current_quote > 0 else 0.0
                         elif "Vendita" in tipo:
                             profit_on_sale = (px_trade - current_pmc) * qty_trade
                             cumulative_realized += profit_on_sale
@@ -126,31 +126,35 @@ with tab_scanner:
                                 current_quote = 0
                                 current_pmc = 0.0
 
-                # ESTRAZIONE CORRETTA DEI DATI DAL BATCH DATAFRAME
+                # 3. ESTRAZIONE SICURA DEL TICKER DAL BATCH (Gestione MultiIndex)
                 h = pd.DataFrame()
-                if dati_batch is not None and not dati_batch.empty:
+                if not dati_batch.empty:
                     try:
-                        if len(tickers_attuali) > 1:
-                            # Estrazione sicura per MultiIndex delle colonne
-                            h = pd.DataFrame({
-                                'Close': dati_batch['Close'][ticker],
-                                'High': dati_batch['High'][ticker],
-                                'Low': dati_batch['Low'][ticker],
-                                'Open': dati_batch['Open'][ticker]
-                            }).dropna(subset=['Close'])
+                        # Se ci sono più ticker, yfinance crea colonne trasposte o MultiIndex
+                        if isinstance(dati_batch.columns, pd.MultiIndex):
+                            # Trova la colonna 'Close' indipendentemente dal livello del MultiIndex
+                            if 'Close' in dati_batch.columns.levels[0]:
+                                close_series = dati_batch['Close'][ticker]
+                            else:
+                                close_series = dati_batch.xs('Close', axis=1, level=1)[ticker]
                         else:
-                            h = dati_batch.dropna(subset=['Close'])
+                            close_series = dati_batch['Close']
+                        
+                        h = pd.DataFrame({'Close': close_series}).dropna()
                     except Exception:
                         h = pd.DataFrame()
 
-                # FALLBACK SE IL BATCH FALLISCE
-                if h.empty: 
+                # FALLBACK SINGOLO SE IL MULTIINDEX FALLISCE
+                if h.empty or len(h) < 20: 
                     try:
                         s = yf.Ticker(ticker)
-                        h = s.history(period="2y")
+                        h_single = s.history(period="2y")
+                        if not h_single.empty:
+                            h = pd.DataFrame({'Close': h_single['Close']}).dropna()
                     except Exception:
-                        h = pd.DataFrame()
+                        pass
                 
+                # SE ANCORA VUOTO, MOSTRA AVVISO
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
@@ -158,12 +162,13 @@ with tab_scanner:
                         st.markdown("---")
                     continue
                 
-                # CALCOLO INDICATORI
+                # 4. CALCOLO INDICATORI SULLA SERIE 'CLOSE'
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean()
                 std = h['Close'].rolling(20).std()
                 h['BBL'] = sma - (std * 2)
                 h['BBU'] = sma + (std * 2)
+                
                 delta = h['Close'].diff()
                 up = delta.clip(lower=0)
                 dw = -1 * delta.clip(upper=0)
@@ -176,6 +181,7 @@ with tab_scanner:
                 prev = h.iloc[-2]
                 px_now = float(last['Close'])
                 
+                # 5. LOGICA SEGNALI
                 if strategia == "Trend Crossover (MACD)":
                     macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
                     macd_cross_down = (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal'])
@@ -213,9 +219,10 @@ with tab_scanner:
                     tot_usd_unrealized += pnl_unrealized
                     tot_usd_realized += cumulative_realized
 
+                # 6. OUTPUT UI PER SINGOLO TICKER
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
-                    st.write(f"Prezzo: {px_now:.2f} {valuta_t}")
+                    st.write(f"Prezzo: **{px_now:.2f} {valuta_t}**")
                     if segnale_ui.startswith("🟢"): 
                         st.success(segnale_ui.replace("*", ""))
                     elif segnale_ui.startswith("🔴"): 
@@ -235,6 +242,7 @@ with tab_scanner:
                 with cols[i % 3]:
                     st.error(f"❌ Errore su {ticker}: {e}")
 
+        # 7. SINTESI FINALE PORTAFOGLIO
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
