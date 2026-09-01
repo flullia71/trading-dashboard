@@ -86,6 +86,7 @@ except Exception as e:
 st.title("📊 Trading Terminal Pro")
 tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "🧪 Backtesting", "📓 Diario"])
 
+
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
         pnl_sum = st.container()
@@ -104,6 +105,8 @@ with tab_scanner:
             status_text.text(f"⏳ Analisi in corso per {ticker} ({i+1}/{len(tickers_attuali)})...")
             progress_bar.progress((i + 1) / len(tickers_attuali))
             
+            time.sleep(0.3) # Pausa per rispetto del Rate Limit
+            
             try:
                 current_quote = 0.0
                 current_pmc = 0.0
@@ -111,20 +114,24 @@ with tab_scanner:
                 valuta_t = "$"
                 segnale_ui = ""
                 
-                # 1. ELABORAZIONE DIARIO GOOGLE SHEETS
+                # 1. ELABORAZIONE DIARIO GOOGLE SHEETS (Con parsing flessibile)
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
-                    history_t = df_storico[df_storico['Ticker'] == ticker].sort_values('Data')
+                    # Filtro ticker senza distinzione tra maiuscole/minuscole o spazi
+                    history_t = df_storico[df_storico['Ticker'].astype(str).str.strip().str.upper() == ticker].sort_values('Data')
+                    
                     for _, row in history_t.iterrows():
-                        valuta_t = str(row.get('Valuta', '$')) if pd.notna(row.get('Valuta')) and str(row.get('Valuta')).strip() != '' else "$"
-                        tipo = str(row.get('Azione', ''))
+                        valuta_t = str(row.get('Valuta', '$')).strip() if pd.notna(row.get('Valuta')) and str(row.get('Valuta')).strip() != '' else "$"
+                        tipo = str(row.get('Azione', '')).strip().lower()
                         px_trade = float(row.get('Prezzo', 0.0))
                         qty_trade = float(row.get('Quantita', 0.0))
                         
-                        if "Acquisto" in tipo:
+                        # Riconosce sia "Acquisto", "Buy", "Acquisto (Buy)"
+                        if "acquis" in tipo or "buy" in tipo:
                             total_cost = (current_quote * current_pmc) + (qty_trade * px_trade)
                             current_quote += qty_trade
                             current_pmc = total_cost / current_quote if current_quote > 0 else 0.0
-                        elif "Vendita" in tipo:
+                        # Riconosce sia "Vendita", "Sell", "Vendita (Sell)"
+                        elif "vend" in tipo or "sell" in tipo:
                             profit_on_sale = (px_trade - current_pmc) * qty_trade
                             cumulative_realized += profit_on_sale
                             current_quote -= qty_trade
@@ -132,25 +139,27 @@ with tab_scanner:
                                 current_quote = 0.0
                                 current_pmc = 0.0
 
-                # 2. SCARICAMENTO TRAMITE YAHOOQUERY (Bypassa il Rate Limit)
+                # 2. SCARICAMENTO DATI CON RETRY AUTOMATICO
                 h = pd.DataFrame()
-                try:
-                    t_obj = Ticker(ticker)
-                    df_q = t_obj.history(period="2y")
-                    if isinstance(df_q, pd.DataFrame) and not df_q.empty and 'close' in df_q.columns:
-                        h = df_q.reset_index()
-                        h = h.rename(columns={'close': 'Close'})
-                except Exception:
-                    h = pd.DataFrame()
+                for attempt in range(2): # Tenta 2 volte in caso di tentativi bloccati
+                    try:
+                        obj = yf.Ticker(ticker, session=yf_session)
+                        h = obj.history(period="2y")
+                        if not h.empty:
+                            break
+                    except Exception:
+                        time.sleep(0.5)
 
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
-                        st.warning("⚠️ Simbolo non trovato o dati insufficienti.")
+                        if current_quote > 0:
+                            st.write(f"In Portafoglio: **{int(current_quote)} pz** (PMC: {current_pmc:.2f} {valuta_t})")
+                        st.warning("⚠️ Quotazione live non disponibile.")
                         st.markdown("---")
                     continue
                 
-                # 3. CALCOLO INDICATORI
+                # 3. CALCOLO INDICATORI SULLA SERIE
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean()
                 std = h['Close'].rolling(20).std()
@@ -207,7 +216,7 @@ with tab_scanner:
                     tot_usd_unrealized += pnl_unrealized
                     tot_usd_realized += cumulative_realized
 
-                # 5. UI SCHEDA TICKER
+                # 5. SCHEDA TICKER NELL'INTERFACCIA
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
                     st.write(f"Prezzo: **{px_now:.2f} {valuta_t}**")
@@ -218,7 +227,7 @@ with tab_scanner:
                     
                     if current_quote > 0:
                         c = "green" if pnl_unrealized >= 0 else "red"
-                        st.markdown(f"**P&L Attivo:** :{c}[{pnl_unrealized:.2f} {valuta_t}]")
+                        st.markdown(f"**P&L Attivo:** :{c}[{pnl_unrealized:.2f} {valuta_t}] (Qtà: {int(current_quote)})")
                     elif cumulative_realized != 0:
                         c_real = "green" if cumulative_realized > 0 else "red"
                         st.markdown(f"**Realizzato Storico:** :{c_real}[{cumulative_realized:.2f} {valuta_t}]")
@@ -233,13 +242,20 @@ with tab_scanner:
         status_text.empty()
         progress_bar.empty()
 
-        # 6. SINTESI FINALE PORTAFOGLIO
+        # 6. TABELLA SINTESI PORTAFOGLIO FORMATTATA
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
                 df_portafoglio = pd.DataFrame(portafoglio_aperto)
+                
+                # Formattazione pulita delle cifre decimali a 2 posti
                 st.dataframe(
-                    df_portafoglio.style.map(
+                    df_portafoglio.style.format({
+                        "Prezzo Acquisto": "{:.2f}",
+                        "Prezzo Attuale": "{:.2f}",
+                        "P&L Attivo": "{:.2f}",
+                        "Resa %": "{:.2f}%"
+                    }).map(
                         lambda x: 'color: #00CC00' if isinstance(x, (int, float)) and x > 0 else ('color: #FF0000' if isinstance(x, (int, float)) and x < 0 else ''),
                         subset=['P&L Attivo', 'Resa %']
                     ),
