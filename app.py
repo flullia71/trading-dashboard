@@ -89,8 +89,7 @@ with tab_scanner:
         tot_usd_unrealized, tot_usd_realized = 0.0, 0.0
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
-        except Exception as e:
-        st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
+ 
     
         
         for i, ticker in enumerate(tickers_attuali):
@@ -190,7 +189,9 @@ with tab_scanner:
                     elif not segnale_ui:
                         st.write("⚪ In monitoraggio")
                     st.markdown("---")
-            except: pass
+            # except: pass
+        except Exception as e:
+        st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
         
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
