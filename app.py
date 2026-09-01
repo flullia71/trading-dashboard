@@ -189,9 +189,8 @@ with tab_scanner:
                     elif not segnale_ui:
                         st.write("⚪ In monitoraggio")
                     st.markdown("---")
-            # except: pass
-        except Exception as e:
-        st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
+            except: pass
+        
         
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
