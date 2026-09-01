@@ -79,6 +79,8 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
+        st.write("🔍 Pulsante premuto! Inizio caricamento dati...")
+        # ... il tuo codice di analisi ...
         pnl_sum = st.container()
         st.markdown("---")
         st.subheader("📡 Radar Segnali di Mercato")
