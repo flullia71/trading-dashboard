@@ -147,6 +147,8 @@ try:
     h = obj.history(period="2y")
 except Exception:
     h = pd.DataFrame()
+except Exception:
+    h = pd.DataFrame()
                 
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
