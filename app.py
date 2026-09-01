@@ -6,6 +6,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 import requests
+import time
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="Trading Terminal Pro", layout="wide")
@@ -15,8 +16,9 @@ def manda_telegram(messaggio):
         token = st.secrets["telegram_token"]
         chat_id = st.secrets["telegram_chat_id"]
         url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={messaggio}&parse_mode=Markdown"
-        requests.get(url)
-    except: pass
+        requests.get(url, timeout=5)
+    except: 
+        pass
 
 @st.cache_resource
 def get_google_sheet_client():
@@ -29,6 +31,17 @@ client = get_google_sheet_client()
 sheet_url = st.secrets["google_sheet_url"]
 workbook = client.open_by_url(sheet_url)
 sheet_main = workbook.sheet1
+
+# Sessione HTTP custom per bypassare il blocco Rate Limit di Yahoo Finance
+@st.cache_resource
+def get_yf_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    })
+    return session
+
+yf_session = get_yf_session()
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("📋 Radar Setup")
@@ -48,7 +61,8 @@ if st.sidebar.button("💾 Salva Lista Cloud"):
     sheet_config.clear()
     sheet_config.update('A1', [['Ticker']])
     sheet_config.update('A2', [[t] for t in tickers_attuali])
-    st.sidebar.success("Sincronizzata!"); st.rerun()
+    st.sidebar.success("Sincronizzata!")
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 Strategia & Indicatori")
@@ -77,8 +91,6 @@ except Exception as e:
 st.title("📊 Trading Terminal Pro")
 tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "🧪 Backtesting", "📓 Diario"])
 
-import time  # Assicurati che 'import time' sia presente in cima al file, oppure usalo qui
-
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
         pnl_sum = st.container()
@@ -97,8 +109,8 @@ with tab_scanner:
             status_text.text(f"⏳ Analisi in corso per {ticker} ({i+1}/{len(tickers_attuali)})...")
             progress_bar.progress((i + 1) / len(tickers_attuali))
             
-            # Pausa strategica di 200ms per bypassare il Rate Limit di Yahoo Finance
-            time.sleep(0.2)
+            # Pausa di 300ms per evitare il Rate Limit
+            time.sleep(0.3)
             
             try:
                 current_quote = 0.0
@@ -128,17 +140,14 @@ with tab_scanner:
                                 current_quote = 0.0
                                 current_pmc = 0.0
 
-                # 2. SCARICAMENTO DATO SINGOLO CON RETRY
+                # 2. SCARICAMENTO DATO SINGOLO CON SESSIONE USER-AGENT
                 h = pd.DataFrame()
                 try:
-                    obj = yf.Ticker(ticker)
+                    obj = yf.Ticker(ticker, session=yf_session)
                     h = obj.history(period="2y")
-                    import requests
+                except Exception:
+                    h = pd.DataFrame()
 
-
-except Exception:
-    h = pd.DataFrame()
-                
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
@@ -266,7 +275,8 @@ with tab_diario:
             m = -1 if f_a == "Acquisto (Buy)" else 1
             riga = [datetime.now().strftime("%Y-%m-%d %H:%M"), f_t, f_a, f_p, f_q, f_p*f_q*m, f_v]
             sheet_main.append_row(riga)
-            st.success("Registrato!"); st.rerun()
+            st.success("Registrato!")
+            st.rerun()
 
     st.markdown("---")
     st.subheader("📓 Storico Operazioni")
@@ -282,19 +292,27 @@ with tab_backtest:
     capitale_totale = st.number_input("Capitale Iniziale Backtest", value=10000)
     
     if st.button("🧪 Avvia Stress Test"):
-        data = yf.Ticker(sel_ticker).history(period=periodo_test)
+        data = yf.Ticker(sel_ticker, session=yf_session).history(period=periodo_test)
         if len(data) > ema_len:
             data['EMA'] = data['Close'].ewm(span=ema_len, adjust=False).mean()
-            sma = data['Close'].rolling(20).mean(); std = data['Close'].rolling(20).std()
-            data['BBL'] = sma - (std * 2); data['BBU'] = sma + (std * 2)
-            delta = data['Close'].diff(); up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+            sma = data['Close'].rolling(20).mean()
+            std = data['Close'].rolling(20).std()
+            data['BBL'] = sma - (std * 2)
+            data['BBU'] = sma + (std * 2)
+            delta = data['Close'].diff()
+            up = delta.clip(lower=0)
+            dw = -1 * delta.clip(upper=0)
             data['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
             data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
             data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
             
-            cap = capitale_totale; pos = []; in_pos = False; qty = 0
+            cap = capitale_totale
+            pos = []
+            in_pos = False
+            qty = 0
             for i in range(ema_len, len(data)):
-                row = data.iloc[i]; prev = data.iloc[i-1]
+                row = data.iloc[i]
+                prev = data.iloc[i-1]
                 
                 if strategia == "Trend Crossover (MACD)":
                     buy_cond = (prev['MACD'] < prev['MACD_Signal']) and (row['MACD'] > row['MACD_Signal']) and (row['Close'] > row['EMA'])
@@ -304,8 +322,10 @@ with tab_backtest:
                     sell_cond = (row['Close'] >= row['BBU']) or (row['RSI'] > rsi_soglia_sell)
 
                 if not in_pos and buy_cond:
-                    qty = cap // row['Close']; cap -= qty * row['Close']
-                    pos.append({'Entrata': row.name, 'Prezzo E': row['Close']}); in_pos = True
+                    qty = cap // row['Close']
+                    cap -= qty * row['Close']
+                    pos.append({'Entrata': row.name, 'Prezzo E': row['Close']})
+                    in_pos = True
                 elif in_pos and sell_cond:
                     cap += qty * row['Close']
                     pos[-1].update({'Uscita': row.name, 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
@@ -316,4 +336,5 @@ with tab_backtest:
                 st.metric("P/L Totale Strategia", f"{df_res['P/L'].sum():.2f}")
                 st.line_chart(df_res['P/L'].cumsum())
                 st.dataframe(df_res)
-            else: st.warning("Nessuna operazione conclusa nel periodo scelto.")
+            else: 
+                st.warning("Nessuna operazione conclusa nel periodo scelto.")
