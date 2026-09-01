@@ -79,8 +79,6 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
-        st.write("🔍 Pulsante premuto! Inizio caricamento dati...")
-        
         pnl_sum = st.container()
         st.markdown("---")
         st.subheader("📡 Radar Segnali di Mercato")
@@ -90,6 +88,15 @@ with tab_scanner:
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
 
+        # SCARICAMENTO IN BATCH (Un'unica richiesta per evitare il Rate Limit)
+        with st.spinner("📥 Scaricamento dati di mercato in corso..."):
+            try:
+                # Scarica i dati di tutti i ticker insieme
+                dati_batch = yf.download(tickers_attuali, period="2y", group_by='ticker', threads=True)
+            except Exception as e:
+                st.error(f"❌ Errore scaricamento generale: {e}")
+                dati_batch = None
+
         for i, ticker in enumerate(tickers_attuali):
             try:
                 current_quote = 0
@@ -98,6 +105,7 @@ with tab_scanner:
                 valuta_t = "$"
                 segnale_ui = ""
                 
+                # Elaborazione dati dal Diario Google Sheets
                 if not df_storico.empty:
                     history_t = df_storico[df_storico['Ticker'] == ticker].sort_values('Data')
                     for _, row in history_t.iterrows():
@@ -117,13 +125,19 @@ with tab_scanner:
                             if current_quote <= 0:
                                 current_quote = 0
                                 current_pmc = 0.0
-    
-                s = yf.Ticker(ticker)
-                h = s.history(period="2y")
-                if h.empty: 
+
+                # Estrazione dati del singolo ticker dal Batch
+                if dati_batch is not None and ticker in dati_batch:
+                    h = dati_batch[ticker].dropna(subset=['Close'])
+                else:
+                    # Fallback nel caso di ticker singolo
+                    s = yf.Ticker(ticker)
+                    h = s.history(period="2y")
+                
+                if h.empty or len(h) < 20: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
-                        st.warning("⚠️ Simbolo non trovato o dati non disponibili.")
+                        st.warning("⚠️ Simbolo non trovato o dati insufficienti.")
                         st.markdown("---")
                     continue
                 
@@ -142,7 +156,7 @@ with tab_scanner:
                 
                 last = h.iloc[-1]
                 prev = h.iloc[-2]
-                px_now = last['Close']
+                px_now = float(last['Close'])
                 
                 if strategia == "Trend Crossover (MACD)":
                     macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
@@ -200,7 +214,6 @@ with tab_scanner:
                     st.markdown("---")
 
             except Exception as e:
-                # QUESTO MOSTRERÀ L'ERRORE ESATTO A SCHERMO SE UN TICKER FALLISCE
                 with cols[i % 3]:
                     st.error(f"❌ Errore su {ticker}: {e}")
 
