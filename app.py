@@ -89,6 +89,9 @@ with tab_scanner:
         tot_usd_unrealized, tot_usd_realized = 0.0, 0.0
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
+        except Exception as e:
+        st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
+    
         
         for i, ticker in enumerate(tickers_attuali):
             try:
@@ -117,8 +120,7 @@ with tab_scanner:
                             if current_quote <= 0:
                                 current_quote = 0
                                 current_pmc = 0.0
-    except Exception as e:
-    st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
+    
                 s = yf.Ticker(ticker); h = s.history(period="2y")
                 if h.empty: 
                     with cols[i % 3]:
