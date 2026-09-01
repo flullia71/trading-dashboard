@@ -72,6 +72,12 @@ try:
         df_storico['Controvalore'] = pd.to_numeric(df_storico['Controvalore'], errors='coerce').fillna(0)
         df_storico['Prezzo'] = pd.to_numeric(df_storico['Prezzo'], errors='coerce').fillna(0)
         df_storico['Data'] = pd.to_datetime(df_storico['Data'], errors='coerce')
+
+# DEBUG VISIVO TEMPORANEO
+    st.write("📌 Righedati trovate nel Google Sheet Diario:", len(df_storico))
+    if not df_storico.empty:
+        st.write("📌 Anteprima Diario Google Sheet:", df_storico.head(2))
+        
 except Exception as e:
     st.error(f"Errore connessione Diario: {e}")
     df_storico = pd.DataFrame(columns=colonne_attese)
