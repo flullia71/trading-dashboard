@@ -102,165 +102,140 @@ with tab_scanner:
         status_text = st.empty()
 
         for i, ticker in enumerate(tickers_attuali):
-            status_text.text(f"⏳ Analisi in corso per {ticker} ({i+1}/{len(tickers_attuali)})...")
+            status_text.text(f"⏳ Elaborazione {ticker} ({i+1}/{len(tickers_attuali)})...")
             progress_bar.progress((i + 1) / len(tickers_attuali))
             
-            time.sleep(0.3) # Pausa per rispetto del Rate Limit
+            # 1. ELABORAZIONE DIARIO GOOGLE SHEETS (Sempre eseguita)
+            current_quote = 0.0
+            current_pmc = 0.0
+            cumulative_realized = 0.0
+            valuta_t = "$"
             
+            if not df_storico.empty and 'Ticker' in df_storico.columns:
+                history_t = df_storico[df_storico['Ticker'].astype(str).str.strip().str.upper() == ticker].sort_values('Data')
+                for _, row in history_t.iterrows():
+                    valuta_t = str(row.get('Valuta', '$')).strip() if pd.notna(row.get('Valuta')) and str(row.get('Valuta')).strip() != '' else "$"
+                    tipo = str(row.get('Azione', '')).strip().lower()
+                    px_trade = float(row.get('Prezzo', 0.0))
+                    qty_trade = float(row.get('Quantita', 0.0))
+                    
+                    if "acquis" in tipo or "buy" in tipo:
+                        total_cost = (current_quote * current_pmc) + (qty_trade * px_trade)
+                        current_quote += qty_trade
+                        current_pmc = total_cost / current_quote if current_quote > 0 else 0.0
+                    elif "vend" in tipo or "sell" in tipo:
+                        profit_on_sale = (px_trade - current_pmc) * qty_trade
+                        cumulative_realized += profit_on_sale
+                        current_quote -= qty_trade
+                        if current_quote <= 0:
+                            current_quote = 0.0
+                            current_pmc = 0.0
+
+            # 2. TENTATIVO DI SCARICAMENTO QUOTAZIONE DA YAHOO
+            time.sleep(0.3)
+            h = pd.DataFrame()
+            px_now = None
+            segnale_ui = ""
+
             try:
-                current_quote = 0.0
-                current_pmc = 0.0
-                cumulative_realized = 0.0
-                valuta_t = "$"
-                segnale_ui = ""
-                
-                # 1. ELABORAZIONE DIARIO GOOGLE SHEETS (Con parsing flessibile)
-                if not df_storico.empty and 'Ticker' in df_storico.columns:
-                    # Filtro ticker senza distinzione tra maiuscole/minuscole o spazi
-                    history_t = df_storico[df_storico['Ticker'].astype(str).str.strip().str.upper() == ticker].sort_values('Data')
-                    
-                    for _, row in history_t.iterrows():
-                        valuta_t = str(row.get('Valuta', '$')).strip() if pd.notna(row.get('Valuta')) and str(row.get('Valuta')).strip() != '' else "$"
-                        tipo = str(row.get('Azione', '')).strip().lower()
-                        px_trade = float(row.get('Prezzo', 0.0))
-                        qty_trade = float(row.get('Quantita', 0.0))
-                        
-                        # Riconosce sia "Acquisto", "Buy", "Acquisto (Buy)"
-                        if "acquis" in tipo or "buy" in tipo:
-                            total_cost = (current_quote * current_pmc) + (qty_trade * px_trade)
-                            current_quote += qty_trade
-                            current_pmc = total_cost / current_quote if current_quote > 0 else 0.0
-                        # Riconosce sia "Vendita", "Sell", "Vendita (Sell)"
-                        elif "vend" in tipo or "sell" in tipo:
-                            profit_on_sale = (px_trade - current_pmc) * qty_trade
-                            cumulative_realized += profit_on_sale
-                            current_quote -= qty_trade
-                            if current_quote <= 0:
-                                current_quote = 0.0
-                                current_pmc = 0.0
+                obj = yf.Ticker(ticker, session=yf_session)
+                h = obj.history(period="2y")
+                if not h.empty and len(h) >= 20:
+                    px_now = float(h.iloc[-1]['Close'])
+            except Exception:
+                px_now = None
 
-                # 2. SCARICAMENTO DATI CON RETRY AUTOMATICO
-                h = pd.DataFrame()
-                for attempt in range(2): # Tenta 2 volte in caso di tentativi bloccati
-                    try:
-                        obj = yf.Ticker(ticker, session=yf_session)
-                        h = obj.history(period="2y")
-                        if not h.empty:
-                            break
-                    except Exception:
-                        time.sleep(0.5)
+            # 3. CALCOLO P&L ATTIVO E COSTRUZIONE TABELLA PORTAFOGLIO
+            pnl_unrealized = 0.0
+            res_perc = 0.0
 
-                if h.empty or len(h) < 20: 
-                    with cols[i % 3]:
-                        st.subheader(f"🏢 {ticker}")
-                        if current_quote > 0:
-                            st.write(f"In Portafoglio: **{int(current_quote)} pz** (PMC: {current_pmc:.2f} {valuta_t})")
-                        st.warning("⚠️ Quotazione live non disponibile.")
-                        st.markdown("---")
-                    continue
-                
-                # 3. CALCOLO INDICATORI SULLA SERIE
-                h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
-                sma = h['Close'].rolling(20).mean()
-                std = h['Close'].rolling(20).std()
-                h['BBL'] = sma - (std * 2)
-                h['BBU'] = sma + (std * 2)
-                
-                delta = h['Close'].diff()
-                up = delta.clip(lower=0)
-                dw = -1 * delta.clip(upper=0)
-                h['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
-                
-                h['MACD'] = h['Close'].ewm(span=12, adjust=False).mean() - h['Close'].ewm(span=26, adjust=False).mean()
-                h['MACD_Signal'] = h['MACD'].ewm(span=9, adjust=False).mean()
-                
-                last = h.iloc[-1]
-                prev = h.iloc[-2]
-                px_now = float(last['Close'])
-                
-                # 4. LOGICA SEGNALI
-                if strategia == "Trend Crossover (MACD)":
-                    macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
-                    macd_cross_down = (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal'])
-                    if current_quote > 0 and macd_cross_down:
-                        segnale_ui = f"🔴 *SELL (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
-                    elif current_quote == 0 and macd_cross_up and (px_now > last['EMA']):
-                        segnale_ui = f"🟢 *BUY (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
-                elif strategia == "Pullback (RSI + Bollinger)":
-                    if current_quote > 0 and (px_now >= last['BBU'] or last['RSI'] > rsi_soglia_sell):
-                        segnale_ui = f"🔴 *SELL (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
-                    elif current_quote == 0 and (px_now > last['EMA']) and (px_now <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
-                        segnale_ui = f"🟢 *BUY (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
-
-                if segnale_ui: 
-                    manda_telegram(segnale_ui)
-
-                pnl_unrealized = (px_now - current_pmc) * current_quote if current_quote > 0 else 0.0
-                
-                if current_quote > 0:
+            if current_quote > 0:
+                if px_now is not None:
+                    pnl_unrealized = (px_now - current_pmc) * current_quote
                     res_perc = ((px_now - current_pmc) / current_pmc * 100) if current_pmc > 0 else 0.0
-                    portafoglio_aperto.append({
-                        "Ticker": ticker, 
-                        "Quantità": int(current_quote), 
-                        "Prezzo Acquisto": round(current_pmc, 2),
-                        "Prezzo Attuale": round(px_now, 2), 
-                        "P&L Attivo": round(pnl_unrealized, 2),
-                        "Resa %": round(res_perc, 2), 
-                        "Valuta": valuta_t
-                    })
                 
-                if valuta_t == "€":
-                    tot_eur_unrealized += pnl_unrealized
-                    tot_eur_realized += cumulative_realized
-                else:
-                    tot_usd_unrealized += pnl_unrealized
-                    tot_usd_realized += cumulative_realized
+                portafoglio_aperto.append({
+                    "Ticker": ticker,
+                    "Quantità": int(current_quote),
+                    "Prezzo Carico (PMC)": round(current_pmc, 2),
+                    "Prezzo Attuale": round(px_now, 2) if px_now is not None else "N/D",
+                    "P&L Attivo": round(pnl_unrealized, 2) if px_now is not None else "N/D",
+                    "Resa %": round(res_perc, 2) if px_now is not None else "N/D",
+                    "Valuta": valuta_t
+                })
 
-                # 5. SCHEDA TICKER NELL'INTERFACCIA
-                with cols[i % 3]:
-                    st.subheader(f"🏢 {ticker}")
-                    st.write(f"Prezzo: **{px_now:.2f} {valuta_t}**")
-                    if segnale_ui.startswith("🟢"): 
-                        st.success(segnale_ui.replace("*", ""))
-                    elif segnale_ui.startswith("🔴"): 
-                        st.error(segnale_ui.replace("*", ""))
+            if valuta_t == "€":
+                tot_eur_unrealized += pnl_unrealized
+                tot_eur_realized += cumulative_realized
+            else:
+                tot_usd_unrealized += pnl_unrealized
+                tot_usd_realized += cumulative_realized
+
+            # 4. SCHEDA INDIVIDUALE DEL TITOLO
+            with cols[i % 3]:
+                st.subheader(f"🏢 {ticker}")
+                
+                if px_now is not None:
+                    st.write(f"Prezzo Attuale: **{px_now:.2f} {valuta_t}**")
                     
-                    if current_quote > 0:
-                        c = "green" if pnl_unrealized >= 0 else "red"
-                        st.markdown(f"**P&L Attivo:** :{c}[{pnl_unrealized:.2f} {valuta_t}] (Qtà: {int(current_quote)})")
-                    elif cumulative_realized != 0:
-                        c_real = "green" if cumulative_realized > 0 else "red"
-                        st.markdown(f"**Realizzato Storico:** :{c_real}[{cumulative_realized:.2f} {valuta_t}]")
-                    elif not segnale_ui:
-                        st.write("⚪ In monitoraggio")
-                    st.markdown("---")
+                    # Calcolo indicatori se i dati storici sono presenti
+                    h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
+                    sma = h['Close'].rolling(20).mean()
+                    std = h['Close'].rolling(20).std()
+                    h['BBL'] = sma - (std * 2)
+                    h['BBU'] = sma + (std * 2)
+                    
+                    delta = h['Close'].diff()
+                    up = delta.clip(lower=0)
+                    dw = -1 * delta.clip(upper=0)
+                    h['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
+                    h['MACD'] = h['Close'].ewm(span=12, adjust=False).mean() - h['Close'].ewm(span=26, adjust=False).mean()
+                    h['MACD_Signal'] = h['MACD'].ewm(span=9, adjust=False).mean()
+                    
+                    last = h.iloc[-1]
+                    prev = h.iloc[-2]
+                    
+                    if strategia == "Trend Crossover (MACD)":
+                        if current_quote > 0 and (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal']):
+                            segnale_ui = f"🔴 *SELL (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
+                        elif current_quote == 0 and (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal']) and (px_now > last['EMA']):
+                            segnale_ui = f"🟢 *BUY (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
+                    elif strategia == "Pullback (RSI + Bollinger)":
+                        if current_quote > 0 and (px_now >= last['BBU'] or last['RSI'] > rsi_soglia_sell):
+                            segnale_ui = f"🔴 *SELL (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
+                        elif current_quote == 0 and (px_now > last['EMA']) and (px_now <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
+                            segnale_ui = f"🟢 *BUY (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
 
-            except Exception as e:
-                with cols[i % 3]:
-                    st.error(f"❌ Errore su {ticker}: {e}")
+                    if segnale_ui:
+                        manda_telegram(segnale_ui)
+                        if segnale_ui.startswith("🟢"): st.success(segnale_ui.replace("*", ""))
+                        elif segnale_ui.startswith("🔴"): st.error(segnale_ui.replace("*", ""))
+                else:
+                    st.warning("⚠️ Quotazione live temporaneamente non disponibile.")
+
+                if current_quote > 0:
+                    st.write(f"Quantità in carico: **{int(current_quote)} pz**")
+                    st.write(f"Prezzo di Carico (PMC): **{current_pmc:.2f} {valuta_t}**")
+                    if px_now is not None:
+                        c = "green" if pnl_unrealized >= 0 else "red"
+                        st.markdown(f"**P&L Attivo:** :{c}[{pnl_unrealized:.2f} {valuta_t}] ({res_perc:+.2f}%)")
+                elif cumulative_realized != 0:
+                    c_real = "green" if cumulative_realized > 0 else "red"
+                    st.markdown(f"**Realizzato Storico:** :{c_real}[{cumulative_realized:.2f} {valuta_t}]")
+                else:
+                    st.write("⚪ In monitoraggio")
+                
+                st.markdown("---")
 
         status_text.empty()
         progress_bar.empty()
 
-        # 6. TABELLA SINTESI PORTAFOGLIO FORMATTATA
+        # 5. SINTESI FINALE PORTAFOGLIO
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
                 df_portafoglio = pd.DataFrame(portafoglio_aperto)
-                
-                # Formattazione pulita delle cifre decimali a 2 posti
-                st.dataframe(
-                    df_portafoglio.style.format({
-                        "Prezzo Acquisto": "{:.2f}",
-                        "Prezzo Attuale": "{:.2f}",
-                        "P&L Attivo": "{:.2f}",
-                        "Resa %": "{:.2f}%"
-                    }).map(
-                        lambda x: 'color: #00CC00' if isinstance(x, (int, float)) and x > 0 else ('color: #FF0000' if isinstance(x, (int, float)) and x < 0 else ''),
-                        subset=['P&L Attivo', 'Resa %']
-                    ),
-                    use_container_width=True, hide_index=True
-                )
+                st.dataframe(df_portafoglio, use_container_width=True, hide_index=True)
             else:
                 st.info("Nessuna azione attualmente in portafoglio.")
             
