@@ -80,7 +80,7 @@ tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
         st.write("🔍 Pulsante premuto! Inizio caricamento dati...")
-        # ... il tuo codice di analisi ...
+        
         pnl_sum = st.container()
         st.markdown("---")
         st.subheader("📡 Radar Segnali di Mercato")
@@ -89,9 +89,7 @@ with tab_scanner:
         tot_usd_unrealized, tot_usd_realized = 0.0, 0.0
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
- 
-    
-        
+
         for i, ticker in enumerate(tickers_attuali):
             try:
                 current_quote = 0
@@ -120,24 +118,30 @@ with tab_scanner:
                                 current_quote = 0
                                 current_pmc = 0.0
     
-                s = yf.Ticker(ticker); h = s.history(period="2y")
+                s = yf.Ticker(ticker)
+                h = s.history(period="2y")
                 if h.empty: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
-                        st.warning("⚠️ Simbolo non trovato.")
+                        st.warning("⚠️ Simbolo non trovato o dati non disponibili.")
                         st.markdown("---")
                     continue
                 
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
-                sma = h['Close'].rolling(20).mean(); std = h['Close'].rolling(20).std()
-                h['BBL'] = sma - (std * 2); h['BBU'] = sma + (std * 2)
-                delta = h['Close'].diff(); up = delta.clip(lower=0); dw = -1 * delta.clip(upper=0)
+                sma = h['Close'].rolling(20).mean()
+                std = h['Close'].rolling(20).std()
+                h['BBL'] = sma - (std * 2)
+                h['BBU'] = sma + (std * 2)
+                delta = h['Close'].diff()
+                up = delta.clip(lower=0)
+                dw = -1 * delta.clip(upper=0)
                 h['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
                 
                 h['MACD'] = h['Close'].ewm(span=12, adjust=False).mean() - h['Close'].ewm(span=26, adjust=False).mean()
                 h['MACD_Signal'] = h['MACD'].ewm(span=9, adjust=False).mean()
                 
-                last = h.iloc[-1]; prev = h.iloc[-2]
+                last = h.iloc[-1]
+                prev = h.iloc[-2]
                 px_now = last['Close']
                 
                 if strategia == "Trend Crossover (MACD)":
@@ -153,7 +157,8 @@ with tab_scanner:
                     elif current_quote == 0 and (px_now > last['EMA']) and (px_now <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
                         segnale_ui = f"🟢 *BUY (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
 
-                if segnale_ui: manda_telegram(segnale_ui)
+                if segnale_ui: 
+                    manda_telegram(segnale_ui)
 
                 pnl_unrealized = (px_now - current_pmc) * current_quote if current_quote > 0 else 0.0
                 
@@ -170,15 +175,19 @@ with tab_scanner:
                     })
                 
                 if valuta_t == "€":
-                    tot_eur_unrealized += pnl_unrealized; tot_eur_realized += cumulative_realized
+                    tot_eur_unrealized += pnl_unrealized
+                    tot_eur_realized += cumulative_realized
                 else:
-                    tot_usd_unrealized += pnl_unrealized; tot_usd_realized += cumulative_realized
+                    tot_usd_unrealized += pnl_unrealized
+                    tot_usd_realized += cumulative_realized
 
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
                     st.write(f"Prezzo: {px_now:.2f} {valuta_t}")
-                    if segnale_ui.startswith("🟢"): st.success(segnale_ui.replace("*", ""))
-                    elif segnale_ui.startswith("🔴"): st.error(segnale_ui.replace("*", ""))
+                    if segnale_ui.startswith("🟢"): 
+                        st.success(segnale_ui.replace("*", ""))
+                    elif segnale_ui.startswith("🔴"): 
+                        st.error(segnale_ui.replace("*", ""))
                     
                     if current_quote > 0:
                         c = "green" if pnl_unrealized >= 0 else "red"
@@ -189,9 +198,12 @@ with tab_scanner:
                     elif not segnale_ui:
                         st.write("⚪ In monitoraggio")
                     st.markdown("---")
-            except: pass
-        
-        
+
+            except Exception as e:
+                # QUESTO MOSTRERÀ L'ERRORE ESATTO A SCHERMO SE UN TICKER FALLISCE
+                with cols[i % 3]:
+                    st.error(f"❌ Errore su {ticker}: {e}")
+
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
