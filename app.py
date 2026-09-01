@@ -117,7 +117,8 @@ with tab_scanner:
                             if current_quote <= 0:
                                 current_quote = 0
                                 current_pmc = 0.0
-
+    except Exception as e:
+    st.error(f"❌ Si è verificato un errore nel caricamento: {e}")
                 s = yf.Ticker(ticker); h = s.history(period="2y")
                 if h.empty: 
                     with cols[i % 3]:
