@@ -77,6 +77,8 @@ except Exception as e:
 st.title("📊 Trading Terminal Pro")
 tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "🧪 Backtesting", "📓 Diario"])
 
+import time  # Assicurati che 'import time' sia presente in cima al file, oppure usalo qui
+
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
         pnl_sum = st.container()
@@ -88,28 +90,28 @@ with tab_scanner:
         tot_eur_unrealized, tot_eur_realized = 0.0, 0.0
         portafoglio_aperto = []
 
-        # 1. SCARICAMENTO DATI BATCH
-        with st.spinner("📥 Scaricamento dati di mercato in corso..."):
-            try:
-                # Download cumulativo pulito
-                dati_batch = yf.download(tickers_attuali, period="2y", auto_adjust=True, progress=False)
-            except Exception as e:
-                st.error(f"❌ Errore scaricamento generale: {e}")
-                dati_batch = pd.DataFrame()
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
         for i, ticker in enumerate(tickers_attuali):
+            status_text.text(f"⏳ Analisi in corso per {ticker} ({i+1}/{len(tickers_attuali)})...")
+            progress_bar.progress((i + 1) / len(tickers_attuali))
+            
+            # Pausa strategica di 200ms per bypassare il Rate Limit di Yahoo Finance
+            time.sleep(0.2)
+            
             try:
-                current_quote = 0
+                current_quote = 0.0
                 current_pmc = 0.0
                 cumulative_realized = 0.0
                 valuta_t = "$"
                 segnale_ui = ""
                 
-                # 2. ELABORAZIONE DIARIO GOOGLE SHEETS
+                # 1. ELABORAZIONE DIARIO GOOGLE SHEETS
                 if not df_storico.empty and 'Ticker' in df_storico.columns:
                     history_t = df_storico[df_storico['Ticker'] == ticker].sort_values('Data')
                     for _, row in history_t.iterrows():
-                        valuta_t = str(row.get('Valuta', '$')) if pd.notna(row.get('Valuta')) else "$"
+                        valuta_t = str(row.get('Valuta', '$')) if pd.notna(row.get('Valuta')) and str(row.get('Valuta')).strip() != '' else "$"
                         tipo = str(row.get('Azione', ''))
                         px_trade = float(row.get('Prezzo', 0.0))
                         qty_trade = float(row.get('Quantita', 0.0))
@@ -123,38 +125,17 @@ with tab_scanner:
                             cumulative_realized += profit_on_sale
                             current_quote -= qty_trade
                             if current_quote <= 0:
-                                current_quote = 0
+                                current_quote = 0.0
                                 current_pmc = 0.0
 
-                # 3. ESTRAZIONE SICURA DEL TICKER DAL BATCH (Gestione MultiIndex)
+                # 2. SCARICAMENTO DATO SINGOLO CON RETRY
                 h = pd.DataFrame()
-                if not dati_batch.empty:
-                    try:
-                        # Se ci sono più ticker, yfinance crea colonne trasposte o MultiIndex
-                        if isinstance(dati_batch.columns, pd.MultiIndex):
-                            # Trova la colonna 'Close' indipendentemente dal livello del MultiIndex
-                            if 'Close' in dati_batch.columns.levels[0]:
-                                close_series = dati_batch['Close'][ticker]
-                            else:
-                                close_series = dati_batch.xs('Close', axis=1, level=1)[ticker]
-                        else:
-                            close_series = dati_batch['Close']
-                        
-                        h = pd.DataFrame({'Close': close_series}).dropna()
-                    except Exception:
-                        h = pd.DataFrame()
+                try:
+                    obj = yf.Ticker(ticker)
+                    h = obj.history(period="2y")
+                except Exception:
+                    h = pd.DataFrame()
 
-                # FALLBACK SINGOLO SE IL MULTIINDEX FALLISCE
-                if h.empty or len(h) < 20: 
-                    try:
-                        s = yf.Ticker(ticker)
-                        h_single = s.history(period="2y")
-                        if not h_single.empty:
-                            h = pd.DataFrame({'Close': h_single['Close']}).dropna()
-                    except Exception:
-                        pass
-                
-                # SE ANCORA VUOTO, MOSTRA AVVISO
                 if h.empty or len(h) < 20: 
                     with cols[i % 3]:
                         st.subheader(f"🏢 {ticker}")
@@ -162,7 +143,7 @@ with tab_scanner:
                         st.markdown("---")
                     continue
                 
-                # 4. CALCOLO INDICATORI SULLA SERIE 'CLOSE'
+                # 3. CALCOLO INDICATORI SULLA SERIE
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean()
                 std = h['Close'].rolling(20).std()
@@ -181,7 +162,7 @@ with tab_scanner:
                 prev = h.iloc[-2]
                 px_now = float(last['Close'])
                 
-                # 5. LOGICA SEGNALI
+                # 4. LOGICA SEGNALI
                 if strategia == "Trend Crossover (MACD)":
                     macd_cross_up = (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal'])
                     macd_cross_down = (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal'])
@@ -219,7 +200,7 @@ with tab_scanner:
                     tot_usd_unrealized += pnl_unrealized
                     tot_usd_realized += cumulative_realized
 
-                # 6. OUTPUT UI PER SINGOLO TICKER
+                # 5. UI SCHEDA TICKER
                 with cols[i % 3]:
                     st.subheader(f"🏢 {ticker}")
                     st.write(f"Prezzo: **{px_now:.2f} {valuta_t}**")
@@ -242,7 +223,10 @@ with tab_scanner:
                 with cols[i % 3]:
                     st.error(f"❌ Errore su {ticker}: {e}")
 
-        # 7. SINTESI FINALE PORTAFOGLIO
+        status_text.empty()
+        progress_bar.empty()
+
+        # 6. SINTESI FINALE PORTAFOGLIO
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
