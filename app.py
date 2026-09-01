@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -7,6 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import requests
 import time
+from yahooquery import Ticker
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="Trading Terminal Pro", layout="wide")
@@ -31,17 +31,6 @@ client = get_google_sheet_client()
 sheet_url = st.secrets["google_sheet_url"]
 workbook = client.open_by_url(sheet_url)
 sheet_main = workbook.sheet1
-
-# Sessione HTTP custom per bypassare il blocco Rate Limit di Yahoo Finance
-@st.cache_resource
-def get_yf_session():
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    })
-    return session
-
-yf_session = get_yf_session()
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("📋 Radar Setup")
@@ -109,9 +98,6 @@ with tab_scanner:
             status_text.text(f"⏳ Analisi in corso per {ticker} ({i+1}/{len(tickers_attuali)})...")
             progress_bar.progress((i + 1) / len(tickers_attuali))
             
-            # Pausa di 300ms per evitare il Rate Limit
-            time.sleep(0.3)
-            
             try:
                 current_quote = 0.0
                 current_pmc = 0.0
@@ -140,11 +126,14 @@ with tab_scanner:
                                 current_quote = 0.0
                                 current_pmc = 0.0
 
-                # 2. SCARICAMENTO DATO SINGOLO CON SESSIONE USER-AGENT
+                # 2. SCARICAMENTO TRAMITE YAHOOQUERY (Bypassa il Rate Limit)
                 h = pd.DataFrame()
                 try:
-                    obj = yf.Ticker(ticker, session=yf_session)
-                    h = obj.history(period="2y")
+                    t_obj = Ticker(ticker)
+                    df_q = t_obj.history(period="2y")
+                    if isinstance(df_q, pd.DataFrame) and not df_q.empty and 'close' in df_q.columns:
+                        h = df_q.reset_index()
+                        h = h.rename(columns={'close': 'Close'})
                 except Exception:
                     h = pd.DataFrame()
 
@@ -155,7 +144,7 @@ with tab_scanner:
                         st.markdown("---")
                     continue
                 
-                # 3. CALCOLO INDICATORI SULLA SERIE
+                # 3. CALCOLO INDICATORI
                 h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
                 sma = h['Close'].rolling(20).mean()
                 std = h['Close'].rolling(20).std()
@@ -292,7 +281,16 @@ with tab_backtest:
     capitale_totale = st.number_input("Capitale Iniziale Backtest", value=10000)
     
     if st.button("🧪 Avvia Stress Test"):
-        data = yf.Ticker(sel_ticker, session=yf_session).history(period=periodo_test)
+        try:
+            t_test = Ticker(sel_ticker)
+            df_q = t_test.history(period=periodo_test)
+            if isinstance(df_q, pd.DataFrame) and not df_q.empty and 'close' in df_q.columns:
+                data = df_q.reset_index().rename(columns={'close': 'Close'})
+            else:
+                data = pd.DataFrame()
+        except:
+            data = pd.DataFrame()
+
         if len(data) > ema_len:
             data['EMA'] = data['Close'].ewm(span=ema_len, adjust=False).mean()
             sma = data['Close'].rolling(20).mean()
@@ -324,11 +322,11 @@ with tab_backtest:
                 if not in_pos and buy_cond:
                     qty = cap // row['Close']
                     cap -= qty * row['Close']
-                    pos.append({'Entrata': row.name, 'Prezzo E': row['Close']})
+                    pos.append({'Entrata': row.get('date', i), 'Prezzo E': row['Close']})
                     in_pos = True
                 elif in_pos and sell_cond:
                     cap += qty * row['Close']
-                    pos[-1].update({'Uscita': row.name, 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
+                    pos[-1].update({'Uscita': row.get('date', i), 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
                     in_pos = False
             
             if pos and 'P/L' in pos[-1]:
