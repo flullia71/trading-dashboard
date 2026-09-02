@@ -193,7 +193,7 @@ with tab_scanner:
         progress_bar.empty()
 
        # 5. TABELLA SINTESI PORTAFOGLIO
-    with pnl_sum:
+with pnl_sum:
     st.markdown("### 💰 Sintesi Portafoglio")
     if portafoglio_aperto:
         df_portafoglio = pd.DataFrame(portafoglio_aperto)
