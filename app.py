@@ -193,40 +193,40 @@ with tab_scanner:
         progress_bar.empty()
 
        # 5. TABELLA SINTESI PORTAFOGLIO
-with pnl_sum:
-    st.markdown("### 💰 Sintesi Portafoglio")
-    if portafoglio_aperto:
-        df_portafoglio = pd.DataFrame(portafoglio_aperto)
+        with pnl_sum:
+            st.markdown("### 💰 Sintesi Portafoglio")
+            if portafoglio_aperto:
+                df_portafoglio = pd.DataFrame(portafoglio_aperto)
+                
+                # Funzione sicura per applicare il colore rosso/verde
+                def colora_pnl(valore):
+                    try:
+                        val_num = float(valore)
+                        if val_num > 0:
+                            return 'color: #00CC00; font-weight: bold;'
+                        elif val_num < 0:
+                            return 'color: #FF0000; font-weight: bold;'
+                    except (ValueError, TypeError):
+                        pass
+                    return ''
         
-        # Funzione sicura per applicare il colore rosso/verde
-        def colora_pnl(valore):
-            try:
-                val_num = float(valore)
-                if val_num > 0:
-                    return 'color: #00CC00; font-weight: bold;'
-                elif val_num < 0:
-                    return 'color: #FF0000; font-weight: bold;'
-            except (ValueError, TypeError):
-                pass
-            return ''
-
-        # Applicazione dello stile con gestione sicura dei tipi
-        st.dataframe(
-            df_portafoglio.style.applymap(colora_pnl, subset=['P&L Attivo']),
-            use_container_width=True, 
-            hide_index=True
-        )
-    else:
-        st.info("Nessuna azione attualmente in portafoglio.")
-            
-            st.markdown("---")
-            c1, c2 = st.columns(2)
-            c1.markdown("#### 💵 Bilancio USD ($)")
-            c1.metric("P&L Attivo", f"{tot_usd_unrealized:.2f} $")
-            c1.metric("P&L Realizzato", f"{tot_usd_realized:.2f} $")
-            c2.markdown("#### 💶 Bilancio EUR (€)")
-            c2.metric("P&L Attivo", f"{tot_eur_unrealized:.2f} €")
-            c2.metric("P&L Realizzato", f"{tot_eur_realized:.2f} €")
+                # Applicazione dello stile con gestione sicura dei tipi
+                st.dataframe(
+                    df_portafoglio.style.applymap(colora_pnl, subset=['P&L Attivo']),
+                    use_container_width=True, 
+                    hide_index=True
+                )
+            else:
+                st.info("Nessuna azione attualmente in portafoglio.")
+                    
+                    st.markdown("---")
+                    c1, c2 = st.columns(2)
+                    c1.markdown("#### 💵 Bilancio USD ($)")
+                    c1.metric("P&L Attivo", f"{tot_usd_unrealized:.2f} $")
+                    c1.metric("P&L Realizzato", f"{tot_usd_realized:.2f} $")
+                    c2.markdown("#### 💶 Bilancio EUR (€)")
+                    c2.metric("P&L Attivo", f"{tot_eur_unrealized:.2f} €")
+                    c2.metric("P&L Realizzato", f"{tot_eur_realized:.2f} €")
 
 with tab_diario:
     st.subheader("📝 Registra Operazione")
