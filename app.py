@@ -216,17 +216,18 @@ with tab_scanner:
                     use_container_width=True, 
                     hide_index=True
                 )
-            else:
-                st.info("Nessuna azione attualmente in portafoglio.")
-                    
-                    st.markdown("---")
-                    c1, c2 = st.columns(2)
-                    c1.markdown("#### 💵 Bilancio USD ($)")
-                    c1.metric("P&L Attivo", f"{tot_usd_unrealized:.2f} $")
-                    c1.metric("P&L Realizzato", f"{tot_usd_realized:.2f} $")
-                    c2.markdown("#### 💶 Bilancio EUR (€)")
-                    c2.metric("P&L Attivo", f"{tot_eur_unrealized:.2f} €")
-                    c2.metric("P&L Realizzato", f"{tot_eur_realized:.2f} €")
+                else:
+                    st.info("Nessuna azione attualmente in portafoglio.")
+            
+                st.markdown("---")
+                c1, c2 = st.columns(2)
+                c1.markdown("#### 💵 Bilancio USD ($)")
+                c1.metric("P&L Attivo", f"{tot_usd_unrealized:.2f} $")
+                c1.metric("P&L Realizzato", f"{tot_usd_realized:.2f} $")
+                c2.markdown("#### 💶 Bilancio EUR (€)")
+                c2.metric("P&L Attivo", f"{tot_eur_unrealized:.2f} €")
+                c2.metric("P&L Realizzato", f"{tot_eur_realized:.2f} €")
+            
 
 with tab_diario:
     st.subheader("📝 Registra Operazione")
