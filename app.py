@@ -136,7 +136,7 @@ with tab_scanner:
             try:
                 res = finnhub_client.quote(ticker)
                 if res and 'c' in res and res['c'] != 0:
-                    px_now = float(res['c']) # Prezzo corrente di mercato
+                    px_now = float(res['c'])
             except Exception:
                 px_now = None
 
@@ -171,9 +171,9 @@ with tab_scanner:
                 st.subheader(f"🏢 {ticker}")
                 
                 if px_now is not None:
-                    st.write(f"Prezzo Attuale (Finnhub): **{px_now:.2f} {valuta_t}**")
+                    st.write(f"Prezzo Attuale: **{px_now:.2f} {valuta_t}**")
                 else:
-                    st.warning("⚠️ Quotazione Finnhub non disponibile.")
+                    st.warning("⚠️ Quotazione non disponibile.")
 
                 if current_quote > 0:
                     st.write(f"Quantità in carico: **{int(current_quote)} pz**")
@@ -192,13 +192,12 @@ with tab_scanner:
         status_text.empty()
         progress_bar.empty()
 
-       # 5. TABELLA SINTESI PORTAFOGLIO
+        # 5. TABELLA SINTESI PORTAFOGLIO (Eseguita DOPO la fine del ciclo for)
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
                 df_portafoglio = pd.DataFrame(portafoglio_aperto)
                 
-                # Funzione sicura per applicare il colore rosso/verde
                 def colora_pnl(valore):
                     try:
                         val_num = float(valore)
@@ -209,16 +208,21 @@ with tab_scanner:
                     except (ValueError, TypeError):
                         pass
                     return ''
-        
-                # Applicazione dello stile con gestione sicura dei tipi
+
+                styler = df_portafoglio.style
+                if hasattr(styler, 'map'):
+                    styled_df = styler.map(colora_pnl, subset=['P&L Attivo'])
+                else:
+                    styled_df = styler.applymap(colora_pnl, subset=['P&L Attivo'])
+
                 st.dataframe(
-                    df_portafoglio.style.applymap(colora_pnl, subset=['P&L Attivo']),
+                    styled_df,
                     use_container_width=True, 
                     hide_index=True
                 )
             else:
                 st.info("Nessuna azione attualmente in portafoglio.")
-            
+
             st.markdown("---")
             c1, c2 = st.columns(2)
             c1.markdown("#### 💵 Bilancio USD ($)")
