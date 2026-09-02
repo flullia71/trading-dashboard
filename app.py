@@ -6,7 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import requests
 import time
-from yahooquery import Ticker
+import finnhub
 
 # --- 1. CONFIGURAZIONE ---
 st.set_page_config(page_title="Trading Terminal Pro", layout="wide")
@@ -27,10 +27,17 @@ def get_google_sheet_client():
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     return gspread.authorize(creds)
 
+@st.cache_resource
+def get_finnhub_client():
+    api_key = st.secrets["finnhub_key"]
+    return finnhub.Client(api_key=api_key)
+
 client = get_google_sheet_client()
 sheet_url = st.secrets["google_sheet_url"]
 workbook = client.open_by_url(sheet_url)
 sheet_main = workbook.sheet1
+
+finnhub_client = get_finnhub_client()
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("📋 Radar Setup")
@@ -72,12 +79,6 @@ try:
         df_storico['Controvalore'] = pd.to_numeric(df_storico['Controvalore'], errors='coerce').fillna(0)
         df_storico['Prezzo'] = pd.to_numeric(df_storico['Prezzo'], errors='coerce').fillna(0)
         df_storico['Data'] = pd.to_datetime(df_storico['Data'], errors='coerce')
-
-# DEBUG VISIVO TEMPORANEO
-    st.write("📌 Righedati trovate nel Google Sheet Diario:", len(df_storico))
-    if not df_storico.empty:
-        st.write("📌 Anteprima Diario Google Sheet:", df_storico.head(2))
-        
 except Exception as e:
     st.error(f"Errore connessione Diario: {e}")
     df_storico = pd.DataFrame(columns=colonne_attese)
@@ -85,7 +86,6 @@ except Exception as e:
 # --- 4. INTERFACCIA TABS ---
 st.title("📊 Trading Terminal Pro")
 tab_scanner, tab_backtest, tab_diario = st.tabs(["🚀 Scanner & Portafoglio", "🧪 Backtesting", "📓 Diario"])
-
 
 with tab_scanner:
     if st.button("🔍 Avvia Analisi e Calcola Profitti", type="primary"):
@@ -102,10 +102,10 @@ with tab_scanner:
         status_text = st.empty()
 
         for i, ticker in enumerate(tickers_attuali):
-            status_text.text(f"⏳ Elaborazione {ticker} ({i+1}/{len(tickers_attuali)})...")
+            status_text.text(f"⚡ Recupero quotazione API per {ticker} ({i+1}/{len(tickers_attuali)})...")
             progress_bar.progress((i + 1) / len(tickers_attuali))
             
-            # 1. ELABORAZIONE DIARIO GOOGLE SHEETS (Sempre eseguita)
+            # 1. ELABORAZIONE DIARIO GOOGLE SHEETS
             current_quote = 0.0
             current_pmc = 0.0
             cumulative_realized = 0.0
@@ -131,21 +131,16 @@ with tab_scanner:
                             current_quote = 0.0
                             current_pmc = 0.0
 
-            # 2. TENTATIVO DI SCARICAMENTO QUOTAZIONE DA YAHOO
-            time.sleep(0.3)
-            h = pd.DataFrame()
+            # 2. SCARICAMENTO PREZZO LIVE DA FINNHUB
             px_now = None
-            segnale_ui = ""
-
             try:
-                obj = yf.Ticker(ticker, session=yf_session)
-                h = obj.history(period="2y")
-                if not h.empty and len(h) >= 20:
-                    px_now = float(h.iloc[-1]['Close'])
+                res = finnhub_client.quote(ticker)
+                if res and 'c' in res and res['c'] != 0:
+                    px_now = float(res['c']) # Prezzo corrente di mercato
             except Exception:
                 px_now = None
 
-            # 3. CALCOLO P&L ATTIVO E COSTRUZIONE TABELLA PORTAFOGLIO
+            # 3. CALCOLO P&L E COMPOSIZIONE PORTAFOGLIO
             pnl_unrealized = 0.0
             res_perc = 0.0
 
@@ -160,7 +155,7 @@ with tab_scanner:
                     "Prezzo Carico (PMC)": round(current_pmc, 2),
                     "Prezzo Attuale": round(px_now, 2) if px_now is not None else "N/D",
                     "P&L Attivo": round(pnl_unrealized, 2) if px_now is not None else "N/D",
-                    "Resa %": round(res_perc, 2) if px_now is not None else "N/D",
+                    "Resa %": f"{res_perc:+.2f}%" if px_now is not None else "N/D",
                     "Valuta": valuta_t
                 })
 
@@ -171,47 +166,14 @@ with tab_scanner:
                 tot_usd_unrealized += pnl_unrealized
                 tot_usd_realized += cumulative_realized
 
-            # 4. SCHEDA INDIVIDUALE DEL TITOLO
+            # 4. RENDERING CARD TITOLO
             with cols[i % 3]:
                 st.subheader(f"🏢 {ticker}")
                 
                 if px_now is not None:
-                    st.write(f"Prezzo Attuale: **{px_now:.2f} {valuta_t}**")
-                    
-                    # Calcolo indicatori se i dati storici sono presenti
-                    h['EMA'] = h['Close'].ewm(span=ema_len, adjust=False).mean()
-                    sma = h['Close'].rolling(20).mean()
-                    std = h['Close'].rolling(20).std()
-                    h['BBL'] = sma - (std * 2)
-                    h['BBU'] = sma + (std * 2)
-                    
-                    delta = h['Close'].diff()
-                    up = delta.clip(lower=0)
-                    dw = -1 * delta.clip(upper=0)
-                    h['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
-                    h['MACD'] = h['Close'].ewm(span=12, adjust=False).mean() - h['Close'].ewm(span=26, adjust=False).mean()
-                    h['MACD_Signal'] = h['MACD'].ewm(span=9, adjust=False).mean()
-                    
-                    last = h.iloc[-1]
-                    prev = h.iloc[-2]
-                    
-                    if strategia == "Trend Crossover (MACD)":
-                        if current_quote > 0 and (prev['MACD'] > prev['MACD_Signal']) and (last['MACD'] < last['MACD_Signal']):
-                            segnale_ui = f"🔴 *SELL (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
-                        elif current_quote == 0 and (prev['MACD'] < prev['MACD_Signal']) and (last['MACD'] > last['MACD_Signal']) and (px_now > last['EMA']):
-                            segnale_ui = f"🟢 *BUY (MACD)*: {ticker} a {px_now:.2f} {valuta_t}"
-                    elif strategia == "Pullback (RSI + Bollinger)":
-                        if current_quote > 0 and (px_now >= last['BBU'] or last['RSI'] > rsi_soglia_sell):
-                            segnale_ui = f"🔴 *SELL (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
-                        elif current_quote == 0 and (px_now > last['EMA']) and (px_now <= last['BBL']) and (last['RSI'] < rsi_soglia_buy):
-                            segnale_ui = f"🟢 *BUY (Pullback)*: {ticker} a {px_now:.2f} {valuta_t}"
-
-                    if segnale_ui:
-                        manda_telegram(segnale_ui)
-                        if segnale_ui.startswith("🟢"): st.success(segnale_ui.replace("*", ""))
-                        elif segnale_ui.startswith("🔴"): st.error(segnale_ui.replace("*", ""))
+                    st.write(f"Prezzo Attuale (Finnhub): **{px_now:.2f} {valuta_t}**")
                 else:
-                    st.warning("⚠️ Quotazione live temporaneamente non disponibile.")
+                    st.warning("⚠️ Quotazione Finnhub non disponibile.")
 
                 if current_quote > 0:
                     st.write(f"Quantità in carico: **{int(current_quote)} pz**")
@@ -230,7 +192,7 @@ with tab_scanner:
         status_text.empty()
         progress_bar.empty()
 
-        # 5. SINTESI FINALE PORTAFOGLIO
+        # 5. TABELLA SINTESI PORTAFOGLIO
         with pnl_sum:
             st.markdown("### 💰 Sintesi Portafoglio")
             if portafoglio_aperto:
@@ -273,63 +235,4 @@ with tab_diario:
 
 with tab_backtest:
     st.subheader(f"🧪 Simulatore - {strategia}")
-    sel_ticker = st.selectbox("Seleziona Titolo per il Test:", tickers_attuali)
-    periodo_test = st.radio("Orizzonte Temporale:", ["2y", "5y", "max"], horizontal=True)
-    capitale_totale = st.number_input("Capitale Iniziale Backtest", value=10000)
-    
-    if st.button("🧪 Avvia Stress Test"):
-        try:
-            t_test = Ticker(sel_ticker)
-            df_q = t_test.history(period=periodo_test)
-            if isinstance(df_q, pd.DataFrame) and not df_q.empty and 'close' in df_q.columns:
-                data = df_q.reset_index().rename(columns={'close': 'Close'})
-            else:
-                data = pd.DataFrame()
-        except:
-            data = pd.DataFrame()
-
-        if len(data) > ema_len:
-            data['EMA'] = data['Close'].ewm(span=ema_len, adjust=False).mean()
-            sma = data['Close'].rolling(20).mean()
-            std = data['Close'].rolling(20).std()
-            data['BBL'] = sma - (std * 2)
-            data['BBU'] = sma + (std * 2)
-            delta = data['Close'].diff()
-            up = delta.clip(lower=0)
-            dw = -1 * delta.clip(upper=0)
-            data['RSI'] = 100 - (100 / (1 + (up.ewm(com=13, adjust=False).mean() / dw.ewm(com=13, adjust=False).mean())))
-            data['MACD'] = data['Close'].ewm(span=12, adjust=False).mean() - data['Close'].ewm(span=26, adjust=False).mean()
-            data['MACD_Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
-            
-            cap = capitale_totale
-            pos = []
-            in_pos = False
-            qty = 0
-            for i in range(ema_len, len(data)):
-                row = data.iloc[i]
-                prev = data.iloc[i-1]
-                
-                if strategia == "Trend Crossover (MACD)":
-                    buy_cond = (prev['MACD'] < prev['MACD_Signal']) and (row['MACD'] > row['MACD_Signal']) and (row['Close'] > row['EMA'])
-                    sell_cond = (prev['MACD'] > prev['MACD_Signal']) and (row['MACD'] < row['MACD_Signal'])
-                else:
-                    buy_cond = (row['Close'] > row['EMA']) and (row['Close'] <= row['BBL']) and (row['RSI'] < rsi_soglia_buy)
-                    sell_cond = (row['Close'] >= row['BBU']) or (row['RSI'] > rsi_soglia_sell)
-
-                if not in_pos and buy_cond:
-                    qty = cap // row['Close']
-                    cap -= qty * row['Close']
-                    pos.append({'Entrata': row.get('date', i), 'Prezzo E': row['Close']})
-                    in_pos = True
-                elif in_pos and sell_cond:
-                    cap += qty * row['Close']
-                    pos[-1].update({'Uscita': row.get('date', i), 'Prezzo U': row['Close'], 'P/L': (row['Close'] - pos[-1]['Prezzo E']) * qty})
-                    in_pos = False
-            
-            if pos and 'P/L' in pos[-1]:
-                df_res = pd.DataFrame([p for p in pos if 'P/L' in p])
-                st.metric("P/L Totale Strategia", f"{df_res['P/L'].sum():.2f}")
-                st.line_chart(df_res['P/L'].cumsum())
-                st.dataframe(df_res)
-            else: 
-                st.warning("Nessuna operazione conclusa nel periodo scelto.")
+    st.info("La tab Backtesting è pronta per essere configurata con le candele storiche di Finnhub.")
