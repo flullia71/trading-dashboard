@@ -193,13 +193,28 @@ with tab_scanner:
         progress_bar.empty()
 
         # 5. TABELLA SINTESI PORTAFOGLIO
-        with pnl_sum:
-            st.markdown("### 💰 Sintesi Portafoglio")
-            if portafoglio_aperto:
-                df_portafoglio = pd.DataFrame(portafoglio_aperto)
-                st.dataframe(df_portafoglio, use_container_width=True, hide_index=True)
-            else:
-                st.info("Nessuna azione attualmente in portafoglio.")
+with pnl_sum:
+    st.markdown("### 💰 Sintesi Portafoglio")
+    if portafoglio_aperto:
+        df_portafoglio = pd.DataFrame(portafoglio_aperto)
+        
+        # Funzione per applicare i colori rosso/verde
+        def colora_pnl(valore):
+            if isinstance(valore, (int, float)):
+                if valore > 0:
+                    return 'color: #00CC00; font-weight: bold;'
+                elif valore < 0:
+                    return 'color: #FF0000; font-weight: bold;'
+            return ''
+
+        # Applicazione dello stile alla colonna P&L Attivo
+        st.dataframe(
+            df_portafoglio.style.map(colora_pnl, subset=['P&L Attivo']),
+            use_container_width=True, 
+            hide_index=True
+        )
+    else:
+        st.info("Nessuna azione attualmente in portafoglio.")
             
             st.markdown("---")
             c1, c2 = st.columns(2)
