@@ -1,4 +1,4 @@
-name: Scheduled Trading Scan
+name: Scheduled Trading Scan 2
 
 on:
   schedule:
